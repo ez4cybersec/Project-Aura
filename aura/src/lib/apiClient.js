@@ -61,7 +61,7 @@ export const apiClient = {
             return [];
         }
     },
-    /**
+        /**
      * Upload a PCAP file for analysis
      * @param {File} file - The PCAP file to upload
      * @returns {Promise<Object>} Analysis results
@@ -71,15 +71,30 @@ export const apiClient = {
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await fetch(`${API_BASE_URL}/scan/pcap/`, {
+            // 👉 point to the real Django endpoint
+            const response = await fetch(`${API_BASE_URL}/upload-capture/`, {
                 method: 'POST',
                 body: formData,
             });
-            return await handleResponse(response);
+
+            // This gives us Django JSON: { message, summary, csv, total_requests }
+            const data = await handleResponse(response);
+
+            // Shape it so Scan.jsx understands it
+            return {
+                status: 'ok',               // ✅ Scan.jsx checks this
+                message: data.message,
+                summary: data.summary || {},
+                csv: data.csv || null,
+                total_requests: data.total_requests || 0,
+            };
         } catch (error) {
             console.warn("API Error (uploadPCAP):", error);
-            // Return mock response for now to prevent UI crash during demo
-            return { status: 'success', message: 'File uploaded successfully' };
+            return {
+                status: 'error',
+                message: error.message || 'Upload failed',
+            };
         }
     }
+
 };
