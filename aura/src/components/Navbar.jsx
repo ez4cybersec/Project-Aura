@@ -1,7 +1,6 @@
 import React from 'react';
-import { NavLink, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Rocket } from 'lucide-react';
-import { cn } from '../lib/utils';
 import { HandWrittenTitle } from './ui/HandWrittenTitle';
 import { CyberNav } from './ui/CyberNav';
 

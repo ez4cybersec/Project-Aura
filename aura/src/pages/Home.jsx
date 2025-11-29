@@ -29,7 +29,7 @@ export default function Home() {
                             </span>
                         </h1>
                         <p className="text-gray-400 text-xl max-w-2xl mx-auto mb-8">
-                            Next-Gen IPDR & PCAP Forensics. AURA prioritizes genuine compromises over blocked attempts using Response Analysis Heuristics.
+                            Next-Gen Traffic Analysis. AURA prioritizes genuine threats over simple blocked attempts using Smart Response Analysis.
                         </p>
                     </>
                 }
@@ -48,23 +48,23 @@ export default function Home() {
                         <div className="w-16 h-16 bg-blue-900/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-blue-500/30 group-hover:scale-110 transition-transform">
                             <Activity className="w-8 h-8 text-blue-400" />
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">1. Ingest</h3>
-                        <p className="text-gray-400 text-sm">Real-time IPDR/PCAP Stream ingestion and parsing.</p>
+                        <h3 className="text-xl font-bold text-white mb-2">1. Data Collection</h3>
+                        <p className="text-gray-400 text-sm">Real-time traffic monitoring and data gathering.</p>
                     </div>
 
                     <div className="relative z-10 bg-black border border-white/10 p-8 rounded-2xl text-center group hover:border-purple-500/50 transition-colors">
                         <div className="w-16 h-16 bg-purple-900/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-purple-500/30 group-hover:scale-110 transition-transform">
                             <Server className="w-8 h-8 text-purple-400" />
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">2. Analyze</h3>
-                        <p className="text-gray-400 text-sm">Correlation of Request + Response Size + Status Code.</p>
+                        <h3 className="text-xl font-bold text-white mb-2">2. Analysis</h3>
+                        <p className="text-gray-400 text-sm">Smart correlation of request and response patterns.</p>
                     </div>
 
                     <div className="relative z-10 bg-black border border-white/10 p-8 rounded-2xl text-center group hover:border-red-500/50 transition-colors">
                         <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-red-500/30 group-hover:scale-110 transition-transform">
                             <CheckCircle className="w-8 h-8 text-red-400" />
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">3. Verdict</h3>
+                        <h3 className="text-xl font-bold text-white mb-2">3. Result</h3>
                         <p className="text-gray-400 text-sm">Distinguish "Attempt" vs "Successful Breach".</p>
                     </div>
                 </div>

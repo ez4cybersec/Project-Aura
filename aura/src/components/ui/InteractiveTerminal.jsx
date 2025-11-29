@@ -17,7 +17,7 @@ export default function InteractiveTerminal() {
 
     useEffect(() => {
         let delay = 0;
-        bootLines.forEach((line, index) => {
+        bootLines.forEach((line) => {
             // Random typing delay for realism
             const randomDelay = Math.random() * 500 + 400;
             setTimeout(() => {

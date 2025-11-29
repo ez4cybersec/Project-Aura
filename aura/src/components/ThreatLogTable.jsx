@@ -173,16 +173,16 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
                         {/* Stage Headers */}
                         <tr className="border-b border-white/10">
                             <th colSpan="3" className="px-6 py-2 text-left font-bold text-blue-400 text-sm">
-                                1. INGEST
-                                <span className="ml-2 text-xs font-normal text-gray-500">Real-time IPDR/PCAP Stream</span>
+                                1. DATA COLLECTION
+                                <span className="ml-2 text-xs font-normal text-gray-500">Real-time Traffic Stream</span>
                             </th>
                             <th colSpan="3" className="px-6 py-2 text-left font-bold text-yellow-400 text-sm">
-                                2. ANALYZE
-                                <span className="ml-2 text-xs font-normal text-gray-500">Correlation Engine</span>
+                                2. ANALYSIS
+                                <span className="ml-2 text-xs font-normal text-gray-500">Pattern Recognition</span>
                             </th>
                             <th colSpan="1" className="px-6 py-2 text-left font-bold text-red-400 text-sm">
-                                3. VERDICT
-                                <span className="ml-2 text-xs font-normal text-gray-500">Classification</span>
+                                3. RESULT
+                                <span className="ml-2 text-xs font-normal text-gray-500">Action Taken</span>
                             </th>
                         </tr>
                         {/* Column Headers */}
@@ -193,7 +193,7 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
                             <th className="px-6 py-3 font-medium">Attack Type</th>
                             <th className="px-6 py-3 font-medium">Severity</th>
                             <th className="px-6 py-3 font-medium">Status Code</th>
-                            <th className="px-6 py-3 font-medium">Verdict</th>
+                            <th className="px-6 py-3 font-medium">Result</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
