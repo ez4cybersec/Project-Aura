@@ -1,18 +1,35 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Shield, AlertTriangle, Activity, Server, Lock } from 'lucide-react';
+import { AlertTriangle, Activity, Server, Lock } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import ThreatDonut from '../components/ThreatDonut';
 import AttackMap from '../components/AttackMap';
 import ThreatLogTable from '../components/ThreatLogTable';
-import { mockAttacks } from '../lib/mock-data';
+import { apiClient } from '../lib/apiClient';
 
 export default function Dashboard() {
     const [traffic, setTraffic] = useState([]);
+    const [attackTraffic, setAttackTraffic] = useState([]);
+    const [stats, setStats] = useState({ total: 0, threats: 0, breaches: 0, health: 100 });
     const [searchTerm, setSearchTerm] = useState("");
 
     useEffect(() => {
-        // Simulate loading data
-        setTraffic(mockAttacks);
+        const fetchData = async () => {
+            try {
+                const [attacksData, statsData, trafficData] = await Promise.all([
+                    apiClient.getAttacks(),
+                    apiClient.getStats(),
+                    apiClient.getAttackTraffic()
+                ]);
+                setTraffic(attacksData || []);
+                setStats(statsData || { total: 0, threats: 0, breaches: 0, health: 100 });
+                setAttackTraffic(trafficData || []);
+            } catch (error) {
+                console.error("Failed to fetch dashboard data:", error);
+            }
+        };
+
+        fetchData();
+        // Optional: Set up polling interval here if needed
     }, []);
 
     // Filter Logic
@@ -26,23 +43,6 @@ export default function Dashboard() {
         );
     }, [traffic, searchTerm]);
 
-    const stats = useMemo(() => {
-        const dataToUse = filteredTraffic; // Use filtered data for stats to make "all dynamic"
-        const total = dataToUse.length;
-        const threats = dataToUse.filter(t => t.severity === 'High' || t.severity === 'Critical').length;
-        const breaches = dataToUse.filter(t => {
-            const size = parseFloat(t.response_size);
-            return t.status_code === 200 && size > 5 && (t.severity === 'High' || t.severity === 'Critical');
-        }).length;
-
-        return {
-            total,
-            threats,
-            breaches,
-            health: Math.max(0, 100 - (threats * 2))
-        };
-    }, [filteredTraffic]);
-
     return (
         <div className="p-6 space-y-6 pt-24 min-h-screen">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -50,14 +50,14 @@ export default function Dashboard() {
                     title="Total Events"
                     value={stats.total.toLocaleString()}
                     icon={Activity}
-                    trend={searchTerm ? "Filtered" : "+12%"}
+                    trend={searchTerm ? "Filtered" : "Live"}
                     color="text-blue-500"
                 />
                 <StatCard
                     title="Threats Detected"
                     value={stats.threats.toLocaleString()}
                     icon={AlertTriangle}
-                    trend={searchTerm ? "Filtered" : "+5%"}
+                    trend={searchTerm ? "Filtered" : "Live"}
                     color="text-yellow-500"
                 />
                 <StatCard
@@ -79,7 +79,7 @@ export default function Dashboard() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2">
-                    <AttackMap />
+                    <AttackMap data={attackTraffic} />
                 </div>
                 <div>
                     <ThreatDonut data={filteredTraffic} />

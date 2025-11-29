@@ -1,30 +1,51 @@
+/* eslint-disable no-unused-vars */
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import Spotlight from '../components/ui/Spotlight';
-import { Search, Upload, FileCode, Terminal, File } from 'lucide-react';
+import { Upload, Terminal, File } from 'lucide-react';
 import clsx from 'clsx';
+import { apiClient } from '../lib/apiClient';
 
 export default function Scan() {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState('url');
+    const [activeTab, setActiveTab] = useState('pcap'); // Default to PCAP
     const [isScanning, setIsScanning] = useState(false);
     const [scanStep, setScanStep] = useState(0);
     const [files, setFiles] = useState([]);
+    const [uploadError, setUploadError] = useState(null);
 
-    const handleScan = (e) => {
-        e?.preventDefault();
+    // PCAP Upload Handler
+    const handleFileUpload = async () => {
+        if (files.length === 0) return;
+
         setIsScanning(true);
+        setUploadError(null);
 
-        // Simulation sequence
-        setTimeout(() => setScanStep(1), 1000); // Parsing
-        setTimeout(() => setScanStep(2), 2000); // Analyzing
-        setTimeout(() => navigate('/dashboard'), 3000); // Redirect
+        try {
+            // Step 1: Upload
+            setScanStep(0);
+            const response = await apiClient.uploadPCAP(files[0]);
+
+            if (response.status !== 'ok') {
+                throw new Error(response.message || 'Upload failed');
+            }
+
+            // Step 2: Simulation sequence for effect
+            setTimeout(() => setScanStep(1), 1000); // Parsing
+            setTimeout(() => setScanStep(2), 2000); // Analyzing
+            setTimeout(() => navigate('/dashboard'), 3000); // Redirect
+        } catch (error) {
+            console.error("Upload failed:", error);
+            setUploadError("Upload failed. Please try again.");
+            setIsScanning(false);
+        }
     };
 
     const onDrop = useCallback((acceptedFiles) => {
         setFiles(acceptedFiles);
+        setUploadError(null);
     }, []);
 
     const { getRootProps, getInputProps, isDragActive, fileRejections } = useDropzone({
@@ -49,7 +70,7 @@ export default function Scan() {
                     >
                         <div className="text-center mb-10">
                             <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">Command Console</h1>
-                            <p className="text-gray-400">Initiate deep packet inspection or URL analysis</p>
+                            <p className="text-gray-400">Initiate deep packet inspection</p>
                         </div>
 
                         <Spotlight className="p-1">
@@ -57,42 +78,27 @@ export default function Scan() {
                                 {/* Tabs */}
                                 <div className="flex gap-4 mb-8 border-b border-white/10 pb-4">
                                     <button
-                                        onClick={() => setActiveTab('url')}
-                                        className={clsx("pb-2 text-sm font-bold transition-colors relative", activeTab === 'url' ? "text-blue-400" : "text-gray-500 hover:text-gray-300")}
-                                    >
-                                        Live URL Stream
-                                        {activeTab === 'url' && <motion.div layoutId="tab" className="absolute bottom-[-17px] left-0 right-0 h-0.5 bg-blue-400" />}
-                                    </button>
-                                    <button
                                         onClick={() => setActiveTab('pcap')}
                                         className={clsx("pb-2 text-sm font-bold transition-colors relative", activeTab === 'pcap' ? "text-blue-400" : "text-gray-500 hover:text-gray-300")}
                                     >
                                         Forensic PCAP Upload
                                         {activeTab === 'pcap' && <motion.div layoutId="tab" className="absolute bottom-[-17px] left-0 right-0 h-0.5 bg-blue-400" />}
                                     </button>
+
+                                    {/* URL Scan Tab - Disabled for now
+                                    <button
+                                        onClick={() => setActiveTab('url')}
+                                        className={clsx("pb-2 text-sm font-bold transition-colors relative", activeTab === 'url' ? "text-blue-400" : "text-gray-500 hover:text-gray-300")}
+                                    >
+                                        Live URL Stream
+                                        {activeTab === 'url' && <motion.div layoutId="tab" className="absolute bottom-[-17px] left-0 right-0 h-0.5 bg-blue-400" />}
+                                    </button>
+                                    */}
                                 </div>
 
                                 {/* Content */}
                                 <div className="flex-1 flex flex-col justify-center">
-                                    {activeTab === 'url' ? (
-                                        <form onSubmit={handleScan} className="space-y-6">
-                                            <div className="relative group">
-                                                <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200" />
-                                                <div className="relative">
-                                                    <Search className="absolute left-4 top-4 text-gray-400 w-6 h-6" />
-                                                    <input
-                                                        type="url"
-                                                        placeholder="https://target-system.com"
-                                                        required
-                                                        className="w-full bg-zinc-900 text-white pl-14 pr-4 py-4 rounded-lg border border-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder:text-gray-600 font-mono"
-                                                    />
-                                                </div>
-                                            </div>
-                                            <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)]">
-                                                EXECUTE ANALYSIS
-                                            </button>
-                                        </form>
-                                    ) : (
+                                    {activeTab === 'pcap' ? (
                                         <div className="space-y-6">
                                             <div
                                                 {...getRootProps()}
@@ -122,14 +128,39 @@ export default function Scan() {
                                                 </div>
                                             )}
 
+                                            {uploadError && (
+                                                <div className="text-red-400 text-sm text-center">{uploadError}</div>
+                                            )}
+
                                             <button
-                                                onClick={handleScan}
+                                                onClick={handleFileUpload}
                                                 disabled={files.length === 0}
                                                 className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-bold rounded-lg transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)] disabled:shadow-none"
                                             >
                                                 EXECUTE FORENSIC ANALYSIS
                                             </button>
                                         </div>
+                                    ) : (
+                                        /* URL Scan Form - Disabled for now
+                                        <form className="space-y-6">
+                                            <div className="relative group">
+                                                <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200" />
+                                                <div className="relative">
+                                                    <Search className="absolute left-4 top-4 text-gray-400 w-6 h-6" />
+                                                    <input
+                                                        type="url"
+                                                        placeholder="https://target-system.com"
+                                                        required
+                                                        className="w-full bg-zinc-900 text-white pl-14 pr-4 py-4 rounded-lg border border-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder:text-gray-600 font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)]">
+                                                EXECUTE ANALYSIS
+                                            </button>
+                                        </form>
+                                        */
+                                        null
                                     )}
                                 </div>
                             </div>
@@ -149,7 +180,7 @@ export default function Scan() {
 
                             <div className="space-y-2 text-sm">
                                 <div className="text-green-400">
-                                    {'>'} Initializing heuristic engine... <span className="text-green-200">[OK]</span>
+                                    {'>'} Initializing smart engine... <span className="text-green-200">[OK]</span>
                                 </div>
                                 {scanStep >= 1 && (
                                     <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-green-400">
@@ -175,3 +206,4 @@ export default function Scan() {
         </div>
     );
 }
+

@@ -1,16 +1,6 @@
 import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-const data = [
-    { time: '00:00', attacks: 400 },
-    { time: '04:00', attacks: 300 },
-    { time: '08:00', attacks: 550 },
-    { time: '12:00', attacks: 800 },
-    { time: '16:00', attacks: 600 },
-    { time: '20:00', attacks: 900 },
-    { time: '24:00', attacks: 700 },
-];
-
 const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
         return (
@@ -25,7 +15,15 @@ const CustomTooltip = ({ active, payload, label }) => {
     return null;
 };
 
-const AttackMap = () => {
+const AttackMap = ({ data = [] }) => {
+    if (!data || data.length === 0) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 text-slate-500">
+                <p>No traffic data available</p>
+            </div>
+        );
+    }
+
     return (
         <div className="h-full flex flex-col bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6">
             <h3 className="text-slate-300 font-medium mb-6">Global Attack Traffic</h3>
