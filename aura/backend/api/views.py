@@ -314,7 +314,7 @@ def traffic(request):
         # Using 'S' gives a granular graph for short PCAP captures.
         timeline = (
             df_attacks.set_index('dt')
-            .resample('S')['attack_type']
+            .resample('s')['attack_type']
             .count()
             .reset_index(name='attacks')
         )
@@ -338,13 +338,16 @@ def traffic(request):
 
 
 
-from .xai_bert import explain_with_bert
+try:
+    from .bert_predictor import get_explanation # Import the new explainer
+except ImportError:
+    from bert_predictor import get_explanation
+
+
 def explain_attack(request, attack_id: int):
     """
     GET /api/explain/<attack_id>/
-    Use BERT attention to highlight important tokens in that request.
-
-    It does NOT change attack_type (that still comes from regex engine).
+    Uses the new get_explanation function from bert_predictor
     """
     csv_path = _get_latest_csv_path()
     if not csv_path:
@@ -355,20 +358,23 @@ def explain_attack(request, attack_id: int):
     except Exception:
         return JsonResponse({"error": "Failed to read analysis file"}, status=500)
 
-    idx = attack_id - 1  
+    idx = int(attack_id) - 1
     if idx < 0 or idx >= len(df):
         return JsonResponse({"error": "Invalid attack id"}, status=404)
 
     row = df.iloc[idx]
-
-    text = f"{row.get('URL', '')} {row.get('POST_Body', '')}"
+    
+    # Combine URL and Body for context
+    text = f"{row.get('URL', '')} {row.get('POST_Body', '')}".strip()
     attack_type = row.get("attack_type", "Unknown")
+    evidence = row.get("evidence", "")
 
-    xai = explain_with_bert(text)
-    features = xai.get("features", [])
+    # Call the new logic
+    features = get_explanation(text)
 
     return JsonResponse({
         "attack_id": attack_id,
         "attack_type": attack_type,
+        "evidence": evidence,
         "features": features,
     })

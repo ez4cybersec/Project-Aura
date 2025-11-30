@@ -301,8 +301,13 @@ export default function ThreatLogTable({
                       {attack.target}
                     </td>
                     <td className="px-6 py-4 font-medium text-white">
-                      {attack.type}
-                    </td>
+  {attack.type}
+  {attack.is_ml && (
+    <span className="ml-2 text-xs text-emerald-400 uppercase tracking-wide">
+      · ML
+    </span>
+  )}
+</td>
                     <td className="px-6 py-4">
                       {getSeverityBadge(attack.severity)}
                     </td>

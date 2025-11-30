@@ -3,8 +3,15 @@ import urllib.parse
 import re
 from tqdm import tqdm
 
+# Import the BERT predictor
+# This file handles the "Split URL" and "Validation" logic you requested
+try:
+    from .bert_predictor import predict_url_attack
+except ImportError:
+    from bert_predictor import predict_url_attack
+
 # ==============================================================================
-#  1. FIXED REGEX PATTERNS (Existing patterns kept exactly as is)
+#  1. REGEX PATTERNS (Known Signatures)
 # ==============================================================================
 
 CMD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -54,12 +61,13 @@ XXE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"<!entity", r"<!doctype", r"system\s+[\"']", r"public\s+[\"']"
 ]]
 
+# Includes Typosquatting & Spoofing (e.g. @ redirect, punycode, fake brands)
 URL_SPOOF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    r"https?://[^/\s]*@[^/\s]+",
-    r"xn--[a-z0-9\-]+",
-    r"https?://[a-z0-9\-]{25,}\.(com|net|org|xyz|top|info)",
-    r"(paypa1|paypai|paaypal)\.com",
-    r"(g00gle|goog1e)\.com",
+    r"https?://[^/\s]*@[^/\s]+",                  # @ redirection (google.com@evil.com)
+    r"xn--[a-z0-9\-]+",                            # Punycode (homograph attacks)
+    r"https?://[a-z0-9\-]{25,}\.(com|net|org)",    # Suspiciously long domains
+    r"(paypa1|paypai|paaypal)\.com",               # Brand Spoofing
+    r"(g00gle|goog1e|gooogle)\.com",
     r"(faceb00k|facbook)\.com",
     r"(micros0ft|rnicrosoft)\.com",
     r"(instaqram|lnstagram)\.com",
@@ -75,81 +83,67 @@ SHELL_UPLOAD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
 
 RFI_PATTERN = re.compile(r"=\s*(http|https|ftp|ftps)://", re.IGNORECASE)
 
+
 # ==============================================================================
-#  2. ANALYSIS LOGIC (UPDATED WITH EVIDENCE EXTRACTION)
+#  2. MAIN ANALYSIS PIPELINE
 # ==============================================================================
 
 def analyze_threats(row):
     """
-    Returns a tuple: (Attack_Type_String, Evidence_String)
+    Pipeline: 
+    1. Regex (Standard + Spoofing) 
+    2. If Benign -> AI Check (Split & Predict handled in bert_predictor)
     """
     url = str(row.get('URL', '') or "").strip()
     body = str(row.get('POST_Body', '') or "").strip()
 
+    # Normalize URL
     try:
         decoded_url = urllib.parse.unquote_plus(url).lower()
-    except Exception:
+    except:
         decoded_url = url.lower()
 
     body = body.lower()
-    full = decoded_url + " " + body
+    full_payload = decoded_url + " " + body
     
-    parsed = urllib.parse.urlparse(decoded_url)
-    host = (parsed.netloc or "").lower()
-    path = (parsed.path or "").lower()
-    spoof_surface = host + path
-
-    # --- HELPER FUNCTION FOR EVIDENCE ---
-    def find_match(patterns, threat_name):
+    # Helper to check list of patterns
+    def check(patterns, name):
         for p in patterns:
-            match = p.search(full)
-            if match:
-                # Return tuple: (Type, Evidence)
-                return threat_name, f"Matched pattern: '{match.group(0)}'"
+            if p.search(full_payload): 
+                return name, f"Matched regex pattern: '{p.pattern[:25]}...'"
         return None
 
-    # --- CHECKS ---
-
-    # 1. Command Injection
-    res = find_match(CMD_PATTERNS, "Command Injection")
-    if res: return res
-
-    # 2. SQL Injection
-    res = find_match(SQLI_PATTERNS, "SQL Injection")
-    if res: return res
-
-    # 3. XSS
-    res = find_match(XSS_PATTERNS, "Cross-Site Scripting (XSS)")
-    if res: return res
+    # --- PHASE 1: REGEX CHECKS (The Filter) ---
     
-    # 4. URL Spoofing (Special case: check specific surfaces)
-    for p in URL_SPOOF_PATTERNS:
-        if p.search(decoded_url) or p.search(spoof_surface):
-             return "URL Spoofing / Typosquatting", f"Suspicious domain pattern: '{p.pattern}'"
-
-    # 5. LFI
-    res = find_match(LFI_PATTERNS, "Directory Traversal / LFI")
-    if res: return res
-
-    # 6. SSRF
-    res = find_match(SSRF_PATTERNS, "SSRF")
-    if res: return res
-
-    # 7. XXE
-    if "xml" in full:
-        res = find_match(XXE_PATTERNS, "XXE")
+    # 1. Standard Attacks
+    checks = [
+        (CMD_PATTERNS, "Command Injection"),
+        (SQLI_PATTERNS, "SQL Injection"),
+        (XSS_PATTERNS, "Cross-Site Scripting (XSS)"),
+        (LFI_PATTERNS, "Directory Traversal / LFI"),
+        (SSRF_PATTERNS, "SSRF"),
+        (SHELL_UPLOAD_PATTERNS, "Shell Upload Attempt")
+    ]
+    for pats, name in checks:
+        res = check(pats, name)
         if res: return res
 
-    # 8. RFI
-    match = RFI_PATTERN.search(decoded_url)
-    if match:
-        return "Remote File Inclusion (RFI)", f"Remote inclusion pattern: '{match.group(0)}'"
+    # 2. RFI (Specific single regex)
+    if RFI_PATTERN.search(decoded_url):
+        return "Remote File Inclusion (RFI)", "Regex found remote protocol in parameters"
+    
+    # 3. XXE
+    if "xml" in full_payload:
+        res = check(XXE_PATTERNS, "XXE")
+        if res: return res
 
-    # 9. Shell Upload
-    res = find_match(SHELL_UPLOAD_PATTERNS, "Shell Upload Attempt")
-    if res: return res
+    # 4. URL Spoofing / Typosquatting (This was missing in your snippet!)
+    # We check the RAW url for domains, not the decoded payload
+    for p in URL_SPOOF_PATTERNS:
+        if p.search(url):
+             return "URL Spoofing / Typosquatting", f"Suspicious domain pattern: '{p.pattern}'"
 
-    # 10. HPP
+    # 5. HTTP Parameter Pollution (HPP)
     try:
         query = urllib.parse.urlparse(url).query
         if query:
@@ -157,36 +151,49 @@ def analyze_threats(row):
             for key, val in params.items():
                 if len(val) > 1:
                     return "HPP (HTTP Parameter Pollution)", f"Duplicate parameter key: '{key}'"
-    except Exception:
+    except:
         pass
 
-    return "Benign", "No specific threat pattern detected"
+    # --- PHASE 2: AI CHECK (BERT) ---
+    # If we are here, Regex returned "Benign".
+    # We pass the FULL URL. The 'bert_predictor' script handles the splitting 
+    # (Base vs Query) and the "Is this really an attack?" validation logic.
+    
+    bert_label, confidence, evidence = predict_url_attack(row.get('URL', ''))
+    
+    if bert_label != "Benign":
+        return bert_label, evidence
+
+    # --- FINAL VERDICT ---
+    return "Benign", "No threat detected"
 
 
 def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply regex detection + bruteforce logic to a dataframe and return it."""
     if df.empty:
         df['attack_type'] = []
         df['evidence'] = []
         return df
 
     df = df.fillna("")
-    tqdm.pandas(desc="Analyzing Threats")
+    print("🚀 Starting Hybrid Analysis (Regex + AI)...")
+    tqdm.pandas(desc="Scanning")
     
-    # KEY CHANGE: result_type='expand' splits the returned tuple into two columns
+    # Apply pipeline per row
     df[['attack_type', 'evidence']] = df.progress_apply(analyze_threats, axis=1, result_type='expand')
 
-    # Bruteforce detection
+    # --- PHASE 3: BRUTEFORCE DETECTION ---
+    # Traffic volume analysis (Post-Processing)
     login_mask = df['URL'].str.contains("login", case=False, na=False)
     
     if login_mask.any():
         brute_counts = df[login_mask].groupby('Source_IP')['URL'].transform('count')
-        potential_brute_indices = df[login_mask].index
-        conditions = (brute_counts >= 5) & (df.loc[potential_brute_indices, 'attack_type'] == 'Benign')
-        target_indices = potential_brute_indices[conditions]
         
-        # Update Type AND Evidence
-        df.loc[target_indices, 'attack_type'] = "Bruteforce Attack"
-        df.loc[target_indices, 'evidence'] = "High frequency login attempts (5+ from single IP)"
+        # Only mark as Brute Force if it wasn't already caught as something else
+        potential_brute = (brute_counts >= 5) & (df.loc[login_mask.index, 'attack_type'] == 'Benign')
+        target_indices = login_mask.index[potential_brute]
+        
+        if not target_indices.empty:
+            df.loc[target_indices, 'attack_type'] = "Bruteforce Attack"
+            df.loc[target_indices, 'evidence'] = "High frequency login attempts (5+ from single IP)"
 
     return df
