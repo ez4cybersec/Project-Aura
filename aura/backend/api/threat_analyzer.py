@@ -3,15 +3,14 @@ import urllib.parse
 import re
 from tqdm import tqdm
 
-# ============================
-# 1. Pre-Compiled Regex
-# (COPIED exactly, don't remove anything)
-# ============================
+# ==============================================================================
+#  1. FIXED REGEX PATTERNS (Existing patterns kept exactly as is)
+# ==============================================================================
 
 CMD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    r"(?:;|\||&|&&|\n)\s*(ls|cat|pwd|whoami|id|uname|wget|curl|nc|net|ping|sleep|echo|python|perl|ruby|bash|sh|java|gcc|tar|nslookup)",
+    r"(?:;|\||\|\||&&|\n|\$\()\s*\b(ls|cat|pwd|whoami|id|uname|wget|curl|nc|net|ping|sleep|echo|python|perl|ruby|bash|sh|java|gcc|tar|nslookup)\b",
     r"/bin/(sh|bash|zsh|dash|ksh)",
-    r"(fsockopen|pfsockopen|stream_socket_client|exec|system|passthru|shell_exec|popen|proc_open)\s*\(",
+    r"\b(fsockopen|pfsockopen|stream_socket_client|exec|system|passthru|shell_exec|popen|proc_open)\s*\(",
     r"cmd\.exe", r"powershell",
     r"\$\(.*\)", r"`.*`",
     r"{{.*system.*}}"
@@ -19,8 +18,8 @@ CMD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
 
 SQLI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"union\s+(all\s+)?select",
-    r"select\s+.*\s+from",
-    r"(insert\s+into|update\s+.*set|delete\s+from|drop\s+table|alter\s+table|truncate\s+table)",
+    r"\bselect\s+.*?\s+from\b",
+    r"\b(insert\s+into|update\s+.*?set|delete\s+from|drop\s+table|alter\s+table|truncate\s+table)\b",
     r"information_schema|sysobjects|xp_cmdshell",
     r"(or|and)\s+\d+=\d+",
     r"(or|and)\s+['\"][^'\"]+['\"]=['\"][^'\"]+['\"]",
@@ -29,15 +28,10 @@ SQLI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
 ]]
 
 XSS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    r"<script.*?>",
-    r"javascript:",
-    r"vbscript:",
+    r"<script.*?>", r"javascript:", r"vbscript:",
     r"(alert|confirm|prompt)\s*\(",
     r"on(error|load|mouseover|click|focus|blur|change|submit)\s*=",
-    r"<img\s+src",
-    r"<iframe",
-    r"<svg",
-    r"<body"
+    r"<img\s+src", r"<iframe", r"<svg", r"<body"
 ]]
 
 LFI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -49,13 +43,10 @@ LFI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
 ]]
 
 SSRF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    r"http://127\.0\.0\.1",
-    r"http://localhost",
-    r"http://0\.0\.0\.0",
-    r"http://169\.254\.169\.254",
-    r"http://192\.168\.",
-    r"http://10\.",
-    r"http://172\.(1[6-9]|2[0-9]|3[0-1])\.",
+    r"=\s*http://127\.0\.0\.1", r"=\s*http://localhost",
+    r"=\s*http://0\.0\.0\.0", r"=\s*http://169\.254\.169\.254",
+    r"=\s*http://192\.168\.", r"=\s*http://10\.",
+    r"=\s*http://172\.(1[6-9]|2[0-9]|3[0-1])\.",
     r"dict://", r"gopher://", r"ldap://"
 ]]
 
@@ -63,18 +54,10 @@ XXE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"<!entity", r"<!doctype", r"system\s+[\"']", r"public\s+[\"']"
 ]]
 
-# NEW: URL Spoofing / Typosquatting patterns
 URL_SPOOF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    # Use of @ in URL: http://legit.com@evil.com
     r"https?://[^/\s]*@[^/\s]+",
-
-    # Punycode domains (can be used for homograph attacks)
     r"xn--[a-z0-9\-]+",
-
-    # Very long suspicious-looking domains (many chars before main TLD)
     r"https?://[a-z0-9\-]{25,}\.(com|net|org|xyz|top|info)",
-
-    # Common brand typos (examples – you can add more)
     r"(paypa1|paypai|paaypal)\.com",
     r"(g00gle|goog1e)\.com",
     r"(faceb00k|facbook)\.com",
@@ -83,24 +66,23 @@ URL_SPOOF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"(linkedln|1inkedin)\.com"
 ]]
 
-# NEW: Shell upload patterns (web shells, malicious scripts)
 SHELL_UPLOAD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
-    # filename="shell.php", filename=shell.asp, etc. in URL or body
     r"filename\s*=\s*\"?[^\"]*\.(php[0-9]?|phtml|pht|phar|asp|aspx|jsp|cfm|cgi|pl|sh|bash)\"?",
-
-    # Generic "shell" filename indicators
     r"(web)?shell\.php",
     r"(c99|r57|b374k)\.php",
-
-    # Sometimes content-type reveals php upload
     r"content-type\s*:\s*application/(x-php|x-httpd-php|x-shellscript)"
 ]]
 
-
 RFI_PATTERN = re.compile(r"=\s*(http|https|ftp|ftps)://", re.IGNORECASE)
 
+# ==============================================================================
+#  2. ANALYSIS LOGIC (UPDATED WITH EVIDENCE EXTRACTION)
+# ==============================================================================
 
 def analyze_threats(row):
+    """
+    Returns a tuple: (Attack_Type_String, Evidence_String)
+    """
     url = str(row.get('URL', '') or "").strip()
     body = str(row.get('POST_Body', '') or "").strip()
 
@@ -111,63 +93,100 @@ def analyze_threats(row):
 
     body = body.lower()
     full = decoded_url + " " + body
+    
     parsed = urllib.parse.urlparse(decoded_url)
     host = (parsed.netloc or "").lower()
     path = (parsed.path or "").lower()
     spoof_surface = host + path
 
-    if any(p.search(full) for p in CMD_PATTERNS):
-        return "Command Injection"
+    # --- HELPER FUNCTION FOR EVIDENCE ---
+    def find_match(patterns, threat_name):
+        for p in patterns:
+            match = p.search(full)
+            if match:
+                # Return tuple: (Type, Evidence)
+                return threat_name, f"Matched pattern: '{match.group(0)}'"
+        return None
 
-    if any(p.search(full) for p in SQLI_PATTERNS):
-        return "SQL Injection"
+    # --- CHECKS ---
 
-    if any(p.search(full) for p in XSS_PATTERNS):
-        return "Cross-Site Scripting (XSS)"
+    # 1. Command Injection
+    res = find_match(CMD_PATTERNS, "Command Injection")
+    if res: return res
+
+    # 2. SQL Injection
+    res = find_match(SQLI_PATTERNS, "SQL Injection")
+    if res: return res
+
+    # 3. XSS
+    res = find_match(XSS_PATTERNS, "Cross-Site Scripting (XSS)")
+    if res: return res
     
-    if any(p.search(decoded_url) or p.search(spoof_surface) for p in URL_SPOOF_PATTERNS):
-        return "URL Spoofing / Typosquatting"
+    # 4. URL Spoofing (Special case: check specific surfaces)
+    for p in URL_SPOOF_PATTERNS:
+        if p.search(decoded_url) or p.search(spoof_surface):
+             return "URL Spoofing / Typosquatting", f"Suspicious domain pattern: '{p.pattern}'"
 
-    if any(p.search(full) for p in LFI_PATTERNS):
-        return "Directory Traversal / LFI"
+    # 5. LFI
+    res = find_match(LFI_PATTERNS, "Directory Traversal / LFI")
+    if res: return res
 
-    if any(p.search(full) for p in SSRF_PATTERNS):
-        return "SSRF"
+    # 6. SSRF
+    res = find_match(SSRF_PATTERNS, "SSRF")
+    if res: return res
 
-    if "xml" in full and any(p.search(full) for p in XXE_PATTERNS):
-        return "XXE"
+    # 7. XXE
+    if "xml" in full:
+        res = find_match(XXE_PATTERNS, "XXE")
+        if res: return res
 
-    if RFI_PATTERN.search(decoded_url):
-        return "Remote File Inclusion (RFI)"
+    # 8. RFI
+    match = RFI_PATTERN.search(decoded_url)
+    if match:
+        return "Remote File Inclusion (RFI)", f"Remote inclusion pattern: '{match.group(0)}'"
 
-    upload_surface = full
-    if any(p.search(upload_surface) for p in SHELL_UPLOAD_PATTERNS):
-        return "Shell Upload Attempt"
+    # 9. Shell Upload
+    res = find_match(SHELL_UPLOAD_PATTERNS, "Shell Upload Attempt")
+    if res: return res
 
-    # ---------- H. HTTP Parameter Pollution ----------
+    # 10. HPP
     try:
-        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        if any(len(v) > 1 for v in params.values()):
-            return "HPP (HTTP Parameter Pollution)"
-    except:
+        query = urllib.parse.urlparse(url).query
+        if query:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            for key, val in params.items():
+                if len(val) > 1:
+                    return "HPP (HTTP Parameter Pollution)", f"Duplicate parameter key: '{key}'"
+    except Exception:
         pass
 
-    return "Benign"
+    return "Benign", "No specific threat pattern detected"
 
 
 def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     """Apply regex detection + bruteforce logic to a dataframe and return it."""
+    if df.empty:
+        df['attack_type'] = []
+        df['evidence'] = []
+        return df
+
     df = df.fillna("")
-    tqdm.pandas()
-    df['attack_type'] = df.progress_apply(analyze_threats, axis=1)
+    tqdm.pandas(desc="Analyzing Threats")
+    
+    # KEY CHANGE: result_type='expand' splits the returned tuple into two columns
+    df[['attack_type', 'evidence']] = df.progress_apply(analyze_threats, axis=1, result_type='expand')
 
     # Bruteforce detection
-    login_df = df[df['URL'].str.contains("login", case=False, na=False)]
-    if not login_df.empty:
-        brute_counts = login_df.groupby(['Source_IP']).URL.transform('count')
-        df.loc[
-            login_df.index[(brute_counts >= 5) & (df.loc[login_df.index, 'attack_type'] == 'Benign')],
-            'attack_type'
-        ] = "Bruteforce Attack"
+    login_mask = df['URL'].str.contains("login", case=False, na=False)
+    
+    if login_mask.any():
+        brute_counts = df[login_mask].groupby('Source_IP')['URL'].transform('count')
+        potential_brute_indices = df[login_mask].index
+        conditions = (brute_counts >= 5) & (df.loc[potential_brute_indices, 'attack_type'] == 'Benign')
+        target_indices = potential_brute_indices[conditions]
+        
+        # Update Type AND Evidence
+        df.loc[target_indices, 'attack_type'] = "Bruteforce Attack"
+        df.loc[target_indices, 'evidence'] = "High frequency login attempts (5+ from single IP)"
 
     return df

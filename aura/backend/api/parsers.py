@@ -1,68 +1,114 @@
-import subprocess
-import json
 import pandas as pd
+from scapy.all import rdpcap, IP, TCP, Raw
+from scapy.layers.http import HTTPRequest, HTTPResponse
+import os
 
+def pcap_to_dataframe(pcap_path):
+    """
+    Reads a PCAP file using Scapy and correlates Requests with Responses
+    to capture the Status Code.
+    """
+    if not os.path.exists(pcap_path):
+        print(f"File not found: {pcap_path}")
+        return pd.DataFrame()
 
-def pcap_to_dataframe(file_path: str) -> pd.DataFrame:
-    command = [
-        "tshark",
-        "-r", file_path,
-        "-Y", "http",          # include both requests + responses
-        "-T", "json",
-    ]
+    try:
+        # Read all packets from the file
+        packets = rdpcap(pcap_path)
+    except Exception as e:
+        print(f"Error reading PCAP with Scapy: {e}")
+        return pd.DataFrame()
 
-    result = subprocess.run(command, capture_output=True, text=True)
-
-    if result.returncode != 0 or not result.stdout.strip():
-        return pd.DataFrame(columns=["Timestamp", "URL", "POST_Body", "Source_IP", "Status_Code"])
-
-    packets = json.loads(result.stdout)
-    rows = []
+    data_rows = []
+    
+    # Dictionary to store pending requests waiting for a response
+    # Key = (Source_IP, Source_Port, Dest_IP, Dest_Port)
+    pending_requests = {}
 
     for pkt in packets:
-        layers = pkt.get("_source", {}).get("layers", {})
-        http = layers.get("http", {})
-        ip = layers.get("ip", {})
-        frame = layers.get("frame", {})
+        # We only care about IP/TCP packets
+        if not (pkt.haslayer(IP) and pkt.haslayer(TCP)):
+            continue
 
-        def get_field(layer: dict, key: str) -> str:
-            val = layer.get(key)
-            if isinstance(val, list) and val:
-                return val[0]
-            if isinstance(val, str):
-                return val
-            return ""
+        src_ip = pkt[IP].src
+        dst_ip = pkt[IP].dst
+        src_port = pkt[TCP].sport
+        dst_port = pkt[TCP].dport
+        timestamp = float(pkt.time)
 
-        timestamp = get_field(frame, "frame.time")
+        # --- 1. HANDLE HTTP REQUESTS ---
+        if pkt.haslayer(HTTPRequest):
+            http = pkt[HTTPRequest]
+            
+            # Extract basic fields
+            method = http.Method.decode('utf-8', errors='ignore') if http.Method else ""
+            host = http.Host.decode('utf-8', errors='ignore') if http.Host else ""
+            path = http.Path.decode('utf-8', errors='ignore') if http.Path else ""
+            
+            url = f"http://{host}{path}" if host else path
+            
+            # Extract Body (if present)
+            body = ""
+            if pkt.haslayer(Raw):
+                try:
+                    load = pkt[Raw].load.decode('utf-8', errors='ignore')
+                    # If headers are included in Raw, split them out
+                    if "\r\n\r\n" in load:
+                        body = load.split("\r\n\r\n", 1)[1]
+                    else:
+                        body = load
+                except:
+                    pass
 
-        full_uri = get_field(http, "http.request.full_uri")
-        host = get_field(http, "http.host")
-        uri = get_field(http, "http.request.uri")
-
-        if full_uri:
-            url = full_uri
-        elif host or uri:
-            url = f"http://{host}{uri}"
-        else:
-            url = ""
-
-        src_ip = get_field(ip, "ip.src")
-        body = get_field(http, "http.file_data")
-
-        # <-- NEW: try to read response status code if present
-        status_code = get_field(http, "http.response.code") or get_field(
-            http, "http.response.code"
-        )
-
-        # Only log rows that have a URL (requests); status may be blank
-        if url:
-            rows.append({
+            # Create a unique key for this flow
+            # (Client -> Server)
+            key = (src_ip, src_port, dst_ip, dst_port)
+            
+            # Save this request to pending dict
+            pending_requests[key] = {
                 "Timestamp": timestamp,
-                "URL": url,
-                "POST_Body": body,
                 "Source_IP": src_ip,
-                "Status_Code": status_code,
-            })
+                "URL": url,
+                "POST_Body": body.strip(),
+                "Status_Code": ""  # Will be filled later
+            }
 
-    return pd.DataFrame(rows)
+        # --- 2. HANDLE HTTP RESPONSES ---
+        elif pkt.haslayer(HTTPResponse):
+            # Response goes from Server -> Client
+            # So we match using the REVERSE key: (DstIP, DstPort, SrcIP, SrcPort)
+            match_key = (dst_ip, dst_port, src_ip, src_port)
 
+            if match_key in pending_requests:
+                # We found the original request!
+                
+                # Extract status code (e.g., "200", "404")
+                try:
+                    sc = pkt[HTTPResponse].Status_Code
+                    # Scapy might return bytes or string
+                    status_code = int(sc.decode()) if hasattr(sc, 'decode') else int(sc)
+                except:
+                    status_code = 0
+                
+                # Update the request
+                req_data = pending_requests.pop(match_key)
+                req_data["Status_Code"] = status_code
+                
+                # Add to final list
+                data_rows.append(req_data)
+
+    # --- 3. CLEANUP (Add requests that never got a response) ---
+    # This ensures we don't lose data if the capture was cut off
+    for req in pending_requests.values():
+        data_rows.append(req)
+
+    # Convert to DataFrame
+    df = pd.DataFrame(data_rows)
+
+    # Ensure columns exist to prevent "KeyError" later
+    required_cols = ["Timestamp", "Source_IP", "URL", "POST_Body", "Status_Code"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df

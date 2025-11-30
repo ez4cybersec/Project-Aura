@@ -13,15 +13,18 @@ import {
   Flag,
 } from "lucide-react";
 
-export default function ThreatLogTable({ attacks = [], onSearch }) {
+// now clean: no stray <tr> at the top
+export default function ThreatLogTable({
+  attacks = [],
+  onSearch,
+  onSelectAttack,
+}) {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const itemsPerPage = 5;
 
-  // Use passed attacks directly as they are filtered by parent
   const filteredData = attacks;
 
-  // Pagination Logic
   const totalPages = Math.max(1, Math.ceil(filteredData.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedData = filteredData.slice(
@@ -35,7 +38,6 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
     }
   };
 
-  // Badge Logic: Returns styles based on severity
   const getSeverityBadge = (severity) => {
     const level = (severity || "LOW").toString().toUpperCase();
 
@@ -69,9 +71,7 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
     }
   };
 
-  // Verdict Logic – use status/result/status_code from backend
   const getVerdictBadge = (status, verdict, statusCode) => {
-    // "Breach confirmed" path – you can tune this later
     if (
       verdict === "BREACH CONFIRMED" ||
       status === "Success" ||
@@ -90,7 +90,6 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
       );
     }
 
-    // Default → blocked
     return (
       <span className="flex items-center gap-1.5 text-emerald-500 font-medium text-xs tracking-wide px-2 py-1 bg-emerald-500/10 rounded border border-emerald-500/20">
         <ShieldCheck className="w-3 h-3" /> {verdict || "BLOCKED"}
@@ -257,7 +256,6 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
                 </span>
               </th>
             </tr>
-            {/* Column Headers */}
             <tr>
               <th className="px-6 py-3 font-medium">Timestamp</th>
               <th className="px-6 py-3 font-medium">Source IP</th>
@@ -277,7 +275,8 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
                 return (
                   <tr
                     key={idx}
-                    className={`hover:bg-white/[0.02] transition-colors ${
+                    onClick={() => onSelectAttack && onSelectAttack(attack)}
+                    className={`hover:bg-white/[0.02] cursor-pointer transition-colors ${
                       isBreach
                         ? "bg-red-900/10 border-l-2 border-l-red-500"
                         : "border-l-2 border-l-transparent"
@@ -288,10 +287,10 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
                     </td>
                     <td
                       className="px-6 py-4 font-mono text-blue-400 cursor-pointer hover:underline"
-                      onClick={() =>
-                        attack.ip &&
-                        navigator.clipboard.writeText(attack.ip)
-                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        attack.ip && navigator.clipboard.writeText(attack.ip);
+                      }}
                     >
                       {attack.ip}
                     </td>
@@ -331,7 +330,7 @@ export default function ThreatLogTable({ attacks = [], onSearch }) {
         </table>
       </div>
 
-      {/* Pagination Controls */}
+      {/* Pagination */}
       <div className="flex items-center justify-between text-xs text-gray-600 px-1 mt-2">
         <span>
           Showing {filteredData.length === 0 ? 0 : startIndex + 1}-
