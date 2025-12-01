@@ -23,7 +23,7 @@ def find_model_path():
 
 ACTUAL_MODEL_PATH = find_model_path()
 
-# Global variables (Shared)
+# Global variables (Shared) 
 _model = None
 _tokenizer = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"

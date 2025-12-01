@@ -4,12 +4,10 @@ import re
 from tqdm import tqdm
 
 # Import Predictors
-try:
-    from .bert_predictor import predict_url_attack, predict_url_spoofing
-    from .ml_predictor import predict_ml_attack
-except ImportError:
-    from bert_predictor import predict_url_attack, predict_url_spoofing
-    from ml_predictor import predict_ml_attack
+from .bert_predictor import predict_url_attack, predict_url_spoofing
+from .ml_predictor import predict_ml_attack
+# from bert_predictor import predict_url_attack, predict_url_spoofing
+# from ml_predictor import predict_ml_attack
 
 # --- REGEX PATTERNS ---
 CMD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
