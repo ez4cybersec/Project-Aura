@@ -10,29 +10,20 @@ import urllib.parse
 # 1. SMART PATH FINDER
 # ==========================================
 def find_model_path():
+    """Recursively searches for model files (safetensors or bin)"""
     current_dir = os.path.dirname(os.path.abspath(__file__)) 
     search_root = os.path.normpath(os.path.join(current_dir, '..', 'models'))
     
-    print(f"🔍 [BERT] Searching for model files in: {search_root}...")
-
-    if not os.path.exists(search_root):
-        print(f"❌ [BERT] Error: The directory {search_root} does not exist.")
-        return None
+    if not os.path.exists(search_root): return None
 
     for root, dirs, files in os.walk(search_root):
-        if "model.safetensors" in files:
-            print(f"✅ [BERT] Found 'model.safetensors' in: {root}")
+        if "model.safetensors" in files or "pytorch_model.bin" in files:
             return root
-        if "pytorch_model.bin" in files:
-            print(f"✅ [BERT] Found 'pytorch_model.bin' in: {root}")
-            return root
-            
-    print("❌ [BERT] Could not find model files.")
     return None
 
 ACTUAL_MODEL_PATH = find_model_path()
 
-# Global variables
+# Global variables (Shared)
 _model = None
 _tokenizer = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -41,40 +32,31 @@ def load_model():
     global _model, _tokenizer
     if _model is not None: return
 
-    if ACTUAL_MODEL_PATH:
-        model_source = ACTUAL_MODEL_PATH
-        print(f"🔄 [BERT] Loading local model from: {model_source}")
-    else:
-        print("⚠️ [BERT] Local model missing. Downloading 'bert-base-uncased' from Cloud.")
-        model_source = "bert-base-uncased"
+    # Silent fallback logic
+    model_source = ACTUAL_MODEL_PATH if ACTUAL_MODEL_PATH else "bert-base-uncased"
 
     try:
         try:
             _tokenizer = BertTokenizer.from_pretrained(model_source)
         except:
-            print("⚠️ Local tokenizer missing. Downloading standard BERT tokenizer.")
             _tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 
         _model = BertForSequenceClassification.from_pretrained(
             model_source, 
-            use_safetensors=True
+            use_safetensors=True,
+            output_attentions=True # Critical for XAI
         )
         _model.to(_device)
         _model.eval()
-        print("✅ [BERT] Model loaded successfully.")
-
-    except Exception as e:
-        print(f"❌ [BERT] Critical Load Error: {e}")
-        # Fallback to generic model to prevent crash
+    except Exception:
+        # Final safety net: load generic model if local fails
         if model_source != "bert-base-uncased":
-            print("☁️ [BERT] Attempting fallback to cloud model...")
             try:
                 _tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
                 _model = BertForSequenceClassification.from_pretrained("bert-base-uncased")
                 _model.to(_device)
                 _model.eval()
-            except:
-                pass
+            except: pass
 
 # ==========================================
 # 2. VALIDATION LOGIC
@@ -94,17 +76,13 @@ def validate_prediction(label, url_str, query_str):
     return True, ""
 
 # ==========================================
-# 3. NEW: SPOOFING PROMPT LAYER
+# 3. PREDICTION: SPOOFING (Prompt Based)
 # ==========================================
 def predict_url_spoofing(url):
-    """
-    Specific check for URL Spoofing/Typosquatting using a Prompt.
-    Input: Full URL
-    """
     if _model is None: load_model()
     if _model is None: return False, ""
 
-    # PROMPT: We tell the AI explicitly what to look for
+    # PROMPT: Explicit instruction for the model
     prompt = f"analyze domain for spoofing: {url}"
 
     try:
@@ -123,32 +101,28 @@ def predict_url_spoofing(url):
 
         label = _model.config.id2label[predicted_class_id.item()]
         
-        # If AI is confident it's spoofing (or classifies as threat based on domain structure)
         if label == "URL Spoofing / Typosquatting" and confidence.item() > 0.85:
              return True, f"AI detected spoofing pattern ({round(confidence.item()*100)}%)"
-
         return False, ""
     except:
         return False, ""
 
 # ==========================================
-# 4. MAIN ATTACK PREDICTION (Split Strategy)
+# 4. PREDICTION: ATTACK (Split Based)
 # ==========================================
-
 def predict_url_attack(url):
-    if _model is None:
-        load_model()
-        if _model is None: return "Benign", 0.0, "AI Unavailable"
+    if _model is None: load_model()
+    if _model is None: return "Benign", 0.0, "AI Unavailable"
 
-    # --- STEP 1: SPLIT URL ---
+    # Split Logic
     try:
         parsed = urllib.parse.urlparse(str(url))
         path = parsed.path
         query = parsed.query
         
         if query:
-            text_a = query 
-            text_b = path 
+            text_a = query # Payload
+            text_b = path  # Context
             evidence_hint = "Suspicious parameters."
         else:
             text_a = url
@@ -159,7 +133,6 @@ def predict_url_attack(url):
         text_b = None
         evidence_hint = "Suspicious pattern."
 
-    # --- STEP 2: INFERENCE ---
     try:
         inputs = _tokenizer(
             text=text_a,
@@ -178,7 +151,7 @@ def predict_url_attack(url):
         predicted_label = _model.config.id2label[predicted_class_id.item()]
         conf_score = confidence.item()
 
-        # --- STEP 3: VALIDATE ---
+        # Threshold Check
         if conf_score > 0.85:
             is_valid, reason = validate_prediction(predicted_label, url, query)
             
@@ -190,12 +163,11 @@ def predict_url_attack(url):
 
         return "Benign", conf_score, "Low AI confidence"
 
-    except Exception as e:
-        print(f"Prediction Error: {e}")
+    except Exception:
         return "Benign", 0.0, "Error"
 
 # ==========================================
-# 5. EXPLANATION LOGIC
+# 5. EXPLANATION LOGIC (Simple Tokenizer)
 # ==========================================
 def get_explanation(text_input):
     if _tokenizer is None: load_model()

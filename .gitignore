@@ -5,3 +5,4 @@ aura/backend/api/__pycache__/
 /env
 /venv
 /aura/backend/models/
+/aura/backend/ml_model/

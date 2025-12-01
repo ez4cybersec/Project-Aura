@@ -15,7 +15,6 @@ import pandas as pd
 from .parsers import pcap_to_dataframe
 from .threat_analyzer import run_full_analysis
 
-
 # ============================================================
 #  Upload endpoints
 # ============================================================
@@ -108,30 +107,71 @@ def _get_latest_csv_path():
     return os.path.join(UPLOAD_DIR, csv_files[0])
 
 
-def _severity_for_attack(attack_type: str) -> str:
-    high = {
-        "Command Injection",
-        "SSRF",
-        "Directory Traversal / LFI",
-        "Remote File Inclusion (RFI)",
-        "Shell Upload Attempt",
-        "Bruteforce Attack",
-    }
-    medium = {
-        "SQL Injection",
-        "Cross-Site Scripting (XSS)",
-        "URL Spoofing / Typosquatting",
-        "XXE",
-        "HPP (HTTP Parameter Pollution)",
-    }
+ATTACK_SEVERITY = {
+    "Cross-Site Scripting (XSS)": 20,
+    "SQL Injection": 35,
+    "Command Injection": 40,
+    "Directory Traversal / LFI": 25,
+    "Remote File Inclusion (RFI)": 40,
+    "Shell Upload Attempt": 50,
+    "SSRF": 30,
+    "Bruteforce Attack": 20,
+    "URL Spoofing / Typosquatting": 20,
+    "XXE": 35,
+    "HPP (HTTP Parameter Pollution)": 20,
+    "Benign": 0,
+}
 
-    if attack_type in high:
-        return "HIGH"
-    if attack_type in medium:
+SENSITIVE_PATHS = [
+    "login", "admin", "dashboard",
+    "config", "wp-admin", "phpmyadmin",
+]
+
+
+def _risk_score(attack_type: str, url: str, success: bool, attempt_count: int) -> int:
+    risk = 0
+
+    # 1) Attack type base severity
+    risk += ATTACK_SEVERITY.get(attack_type, 10)
+
+    # 2) Sensitive URL weighting
+    url_l = (url or "").lower()
+    if any(x in url_l for x in SENSITIVE_PATHS):
+        risk += 15
+
+    # 3) Breach confirmation weighting
+    if success:
+        risk += 15
+
+    # 4) Frequency weighting
+    if attempt_count > 10:
+        risk += 10
+
+    return min(risk, 100)
+
+
+def _severity_for_attack(
+    attack_type: str,
+    url: str = "",
+    success: bool = False,
+    attempt_count: int = 1,
+) -> str:
+    """
+    Returns LOW / MEDIUM / HIGH / CRITICAL.
+
+    Existing code can still call _severity_for_attack(attack_type)
+    because url/success/attempt_count have safe defaults.
+    """
+    risk = _risk_score(attack_type, url, success, attempt_count)
+
+    if risk <= 25:
+        return "LOW"
+    elif risk <= 50:
         return "MEDIUM"
-    if attack_type == "Benign":
-        return "INFO"
-    return "LOW"
+    elif risk <= 75:
+        return "HIGH"
+    else:
+        return "CRITICAL"
 
 
 def _filtered_attack_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -149,8 +189,6 @@ def _filtered_attack_rows(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 #  /api/attacks/  – detailed rows for table + donut
 # ============================================================
-
-# In views.py
 
 def attacks(request):
     """
@@ -171,13 +209,13 @@ def attacks(request):
         src_ip = row.get("Source_IP", "")
         url = row.get("URL", "")
         timestamp = row.get("Timestamp", "")
-        
+
         # 1. Get Status Code (now extracted by parsers.py)
         # Handle cases where it might be empty string or float
         raw_status = row.get("Status_Code", 0)
         try:
             status_code = int(float(str(raw_status))) if raw_status != "" else 0
-        except:
+        except Exception:
             status_code = 0
 
         evidence = row.get("evidence", "Pattern match detected")
@@ -188,19 +226,20 @@ def attacks(request):
         except Exception:
             target = url
 
+        # Current usage: only attack_type is used for severity, others use defaults
         severity = _severity_for_attack(attack_type)
 
         # 2. Determine Result: Successful vs Unsuccessful
         # 2xx = Success (The server executed the request)
         # 4xx/5xx = Blocked/Failed (The server rejected it)
         if 200 <= status_code < 300:
-            result_label = "Successful" 
-            # Note: "Successful" for an ATTACK is bad for the server, 
+            result_label = "Successful"
+            # Note: "Successful" for an ATTACK is bad for the server,
             # but accurate for the log.
         elif status_code == 0:
-            result_label = "Unknown" # No response captured
+            result_label = "Unknown"  # No response captured
         else:
-            result_label = "Blocked" # 403, 404, 500 etc.
+            result_label = "Blocked"  # 403, 404, 500 etc.
 
         records.append({
             "id": int(idx) + 1,
@@ -211,7 +250,7 @@ def attacks(request):
             "severity": severity,
             "status_code": status_code if status_code > 0 else "N/A",
             "status": "Threat",
-            "result": result_label, # <--- Now dynamic!
+            "result": result_label,
             "url": url,
             "evidence": evidence,
         })
@@ -289,7 +328,7 @@ def traffic(request):
         return JsonResponse([], safe=False)
 
     df = pd.read_csv(csv_path).fillna("")
-    
+
     # Filter out noise
     df_attacks = _filtered_attack_rows(df)
 
@@ -301,17 +340,19 @@ def traffic(request):
         # Convert Timestamp column to datetime objects
         # We assume timestamp is Unix float (from Scapy) or standard string
         # 'coerce' handles errors gracefully
-        df_attacks['dt'] = pd.to_datetime(df_attacks['Timestamp'], unit='s', errors='coerce')
-        
+        df_attacks['dt'] = pd.to_datetime(
+            df_attacks['Timestamp'],
+            unit='s',
+            errors='coerce'
+        )
+
         # Drop rows where timestamp couldn't be parsed
         df_attacks = df_attacks.dropna(subset=['dt'])
 
         if df_attacks.empty:
             return JsonResponse([], safe=False)
 
-        # Resample/Group by 1-second or 1-minute intervals
-        # 'S' = Second, 'T' = Minute. 
-        # Using 'S' gives a granular graph for short PCAP captures.
+        # Resample/Group by 1-second intervals
         timeline = (
             df_attacks.set_index('dt')
             .resample('s')['attack_type']
@@ -327,7 +368,7 @@ def traffic(request):
                 "time": row['dt'].strftime('%H:%M:%S'),
                 "attacks": int(row['attacks'])
             })
-            
+
         return JsonResponse(data, safe=False)
 
     except Exception as e:
@@ -335,15 +376,13 @@ def traffic(request):
         return JsonResponse([], safe=False)
 
 
+# ============================================================
+#  /api/explain/  – per-attack BERT XAI explanation
+# ============================================================
+
+from .xai_bert import get_explanation  # single, clear import
 
 
-
-try:
-    from .bert_predictor import get_explanation # Import the new explainer
-except ImportError:
-    from bert_predictor import get_explanation
-
-from .xai_bert import get_explanation
 @api_view(['POST'])
 def explain_attack(request):
     """
@@ -360,7 +399,6 @@ def explain_attack(request):
             return Response({"error": "No URL provided"}, status=400)
 
         # 2. Run your BERT XAI model
-        # This calls the get_explanation function from xai_bert.py
         explanation_data = get_explanation(target_url)
 
         # 3. Return the data in the format React expects
