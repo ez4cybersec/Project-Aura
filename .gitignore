@@ -1,0 +1,7 @@
+aura/backend/uploads/
+aura/backend/api/__pycache__/
+/*.pt
+/.ipynb_checkpoints
+/env
+/venv
+/aura/backend/models/
