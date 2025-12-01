@@ -343,38 +343,31 @@ try:
 except ImportError:
     from bert_predictor import get_explanation
 
-
-def explain_attack(request, attack_id: int):
+from .xai_bert import get_explanation
+@api_view(['POST'])
+def explain_attack(request):
     """
-    GET /api/explain/<attack_id>/
-    Uses the new get_explanation function from bert_predictor
+    POST /api/explain/
+    Receives JSON: {"url": "http://suspicious.com/..."}
+    Returns JSON: { "explanation": [ {"token": "...", "weight": 0.9}, ... ] }
     """
-    csv_path = _get_latest_csv_path()
-    if not csv_path:
-        return JsonResponse({"error": "No analysis file found"}, status=400)
-
     try:
-        df = pd.read_csv(csv_path).fillna("")
-    except Exception:
-        return JsonResponse({"error": "Failed to read analysis file"}, status=500)
+        # 1. Get the URL from the React request body
+        data = request.data
+        target_url = data.get('url', '')
 
-    idx = int(attack_id) - 1
-    if idx < 0 or idx >= len(df):
-        return JsonResponse({"error": "Invalid attack id"}, status=404)
+        if not target_url:
+            return Response({"error": "No URL provided"}, status=400)
 
-    row = df.iloc[idx]
-    
-    # Combine URL and Body for context
-    text = f"{row.get('URL', '')} {row.get('POST_Body', '')}".strip()
-    attack_type = row.get("attack_type", "Unknown")
-    evidence = row.get("evidence", "")
+        # 2. Run your BERT XAI model
+        # This calls the get_explanation function from xai_bert.py
+        explanation_data = get_explanation(target_url)
 
-    # Call the new logic
-    features = get_explanation(text)
+        # 3. Return the data in the format React expects
+        return Response({
+            "explanation": explanation_data
+        })
 
-    return JsonResponse({
-        "attack_id": attack_id,
-        "attack_type": attack_type,
-        "evidence": evidence,
-        "features": features,
-    })
+    except Exception as e:
+        print(f"XAI Error: {e}")
+        return Response({"error": str(e)}, status=500)

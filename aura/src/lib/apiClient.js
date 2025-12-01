@@ -61,7 +61,8 @@ export const apiClient = {
             return [];
         }
     },
-        /**
+
+    /**
      * Upload a PCAP file for analysis
      * @param {File} file - The PCAP file to upload
      * @returns {Promise<Object>} Analysis results
@@ -94,6 +95,27 @@ export const apiClient = {
                 status: 'error',
                 message: error.message || 'Upload failed',
             };
+        }
+    },
+
+    /**
+     * Fetch AI Explanation for a specific URL
+     * @param {string} url - The suspicious URL to explain
+     * @returns {Promise<Object>} BERT explanation data
+     */
+    getAttackExplanation: async (url) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/explain/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: url })
+            });
+            return await handleResponse(response);
+        } catch (error) {
+            console.warn("API Error (getAttackExplanation):", error);
+            return null;
         }
     }
 

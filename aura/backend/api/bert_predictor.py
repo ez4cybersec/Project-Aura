@@ -7,17 +7,10 @@ from transformers import BertTokenizer, BertForSequenceClassification
 import urllib.parse
 
 # ==========================================
-# 1. SMART PATH FINDER (Updated for .safetensors)
+# 1. SMART PATH FINDER
 # ==========================================
-
 def find_model_path():
-    """
-    Recursively searches for 'model.safetensors' inside backend/models/
-    Returns the folder path containing the model file.
-    """
-    # Start at .../backend/api/
     current_dir = os.path.dirname(os.path.abspath(__file__)) 
-    # Go up to .../backend/models/
     search_root = os.path.normpath(os.path.join(current_dir, '..', 'models'))
     
     print(f"🔍 [BERT] Searching for model files in: {search_root}...")
@@ -26,21 +19,17 @@ def find_model_path():
         print(f"❌ [BERT] Error: The directory {search_root} does not exist.")
         return None
 
-    # Walk through all subfolders
     for root, dirs, files in os.walk(search_root):
-        # We prioritize the safetensors file you confirmed you have
         if "model.safetensors" in files:
             print(f"✅ [BERT] Found 'model.safetensors' in: {root}")
             return root
-        # Fallback check for the old bin format
         if "pytorch_model.bin" in files:
             print(f"✅ [BERT] Found 'pytorch_model.bin' in: {root}")
             return root
             
-    print("❌ [BERT] Could not find 'model.safetensors' or 'pytorch_model.bin'.")
+    print("❌ [BERT] Could not find model files.")
     return None
 
-# Locate the path immediately
 ACTUAL_MODEL_PATH = find_model_path()
 
 # Global variables
@@ -52,7 +41,6 @@ def load_model():
     global _model, _tokenizer
     if _model is not None: return
 
-    # Decide source: Local Folder or Cloud Fallback
     if ACTUAL_MODEL_PATH:
         model_source = ACTUAL_MODEL_PATH
         print(f"🔄 [BERT] Loading local model from: {model_source}")
@@ -61,28 +49,23 @@ def load_model():
         model_source = "bert-base-uncased"
 
     try:
-        # 1. Load Tokenizer
         try:
-            # Try loading from the same folder as the model
             _tokenizer = BertTokenizer.from_pretrained(model_source)
         except:
-            # If vocab.txt is missing locally, download the standard one (Safe fallback)
-            print("⚠️ [BERT] Local tokenizer missing. Downloading standard BERT tokenizer.")
+            print("⚠️ Local tokenizer missing. Downloading standard BERT tokenizer.")
             _tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 
-        # 2. Load Model (With Safetensors Support)
         _model = BertForSequenceClassification.from_pretrained(
             model_source, 
-            use_safetensors=True  # <--- This enables reading your .safetensors file
+            use_safetensors=True
         )
-        
         _model.to(_device)
         _model.eval()
         print("✅ [BERT] Model loaded successfully.")
 
     except Exception as e:
         print(f"❌ [BERT] Critical Load Error: {e}")
-        # Last Resort: Load generic model so the server doesn't crash
+        # Fallback to generic model to prevent crash
         if model_source != "bert-base-uncased":
             print("☁️ [BERT] Attempting fallback to cloud model...")
             try:
@@ -97,7 +80,6 @@ def load_model():
 # 2. VALIDATION LOGIC
 # ==========================================
 def validate_prediction(label, url_str, query_str):
-    """Sanity check to prevent false positives."""
     url_lower = str(url_str).lower()
     query_lower = str(query_str).lower()
 
@@ -112,13 +94,48 @@ def validate_prediction(label, url_str, query_str):
     return True, ""
 
 # ==========================================
-# 3. PREDICTION LOGIC
+# 3. NEW: SPOOFING PROMPT LAYER
+# ==========================================
+def predict_url_spoofing(url):
+    """
+    Specific check for URL Spoofing/Typosquatting using a Prompt.
+    Input: Full URL
+    """
+    if _model is None: load_model()
+    if _model is None: return False, ""
+
+    # PROMPT: We tell the AI explicitly what to look for
+    prompt = f"analyze domain for spoofing: {url}"
+
+    try:
+        inputs = _tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=128,
+            padding="max_length"
+        ).to(_device)
+
+        with torch.no_grad():
+            outputs = _model(**inputs)
+            probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+            confidence, predicted_class_id = torch.max(probs, dim=-1)
+
+        label = _model.config.id2label[predicted_class_id.item()]
+        
+        # If AI is confident it's spoofing (or classifies as threat based on domain structure)
+        if label == "URL Spoofing / Typosquatting" and confidence.item() > 0.85:
+             return True, f"AI detected spoofing pattern ({round(confidence.item()*100)}%)"
+
+        return False, ""
+    except:
+        return False, ""
+
+# ==========================================
+# 4. MAIN ATTACK PREDICTION (Split Strategy)
 # ==========================================
 
 def predict_url_attack(url):
-    """
-    Pipeline: Split URL -> Tokenize -> Predict -> Validate
-    """
     if _model is None:
         load_model()
         if _model is None: return "Benign", 0.0, "AI Unavailable"
@@ -130,7 +147,6 @@ def predict_url_attack(url):
         query = parsed.query
         
         if query:
-            # Prompt format: Payload [SEP] Context
             text_a = query 
             text_b = path 
             evidence_hint = "Suspicious parameters."
@@ -179,7 +195,7 @@ def predict_url_attack(url):
         return "Benign", 0.0, "Error"
 
 # ==========================================
-# 4. EXPLANATION LOGIC
+# 5. EXPLANATION LOGIC
 # ==========================================
 def get_explanation(text_input):
     if _tokenizer is None: load_model()

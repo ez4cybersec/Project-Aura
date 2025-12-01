@@ -13,7 +13,6 @@ import {
   Flag,
 } from "lucide-react";
 
-// now clean: no stray <tr> at the top
 export default function ThreatLogTable({
   attacks = [],
   onSearch,
@@ -103,6 +102,7 @@ export default function ThreatLogTable({
       "Source IP",
       "Target",
       "Attack Vector",
+      "Detection Method",
       "Severity",
       "Verdict",
       "Status Code",
@@ -123,6 +123,7 @@ export default function ThreatLogTable({
           row.ip || "",
           `"${(row.target || "").replace(/"/g, '""')}"`,
           row.type || "",
+          row.detection_method || "Unknown",
           row.severity || "LOW",
           verdict,
           row.status_code || "",
@@ -272,6 +273,10 @@ export default function ThreatLogTable({
                 const isBreach =
                   attack.status === "Success" || attack.status_code === 200;
 
+                // Check detection method from backend
+                const isAI = attack.detection_method === "AI";
+                const isRegex = attack.detection_method === "Regex";
+
                 return (
                   <tr
                     key={idx}
@@ -301,13 +306,18 @@ export default function ThreatLogTable({
                       {attack.target}
                     </td>
                     <td className="px-6 py-4 font-medium text-white">
-  {attack.type}
-  {attack.is_ml && (
-    <span className="ml-2 text-xs text-emerald-400 uppercase tracking-wide">
-      · ML
-    </span>
-  )}
-</td>
+                      {attack.type}
+                      {isAI && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          AI
+                        </span>
+                      )}
+                      {isRegex && (
+                         <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          REGEX
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       {getSeverityBadge(attack.severity)}
                     </td>
