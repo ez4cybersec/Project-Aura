@@ -83,8 +83,8 @@ def predict_ml_attack(query_str):
         prediction = _nb_model.classes_[pred_idx]
 
         # 4. Threshold Check
-        # If confidence is low (< 60%), assume Benign.
-        if max_conf < 0.60 or prediction == "Benign":
+        # If confidence is low (< 70%), assume Benign.
+        if max_conf < 0.70 or prediction == "Benign":
             return "Benign", max_conf, "Low Confidence"
 
         evidence = f"ML Confidence: {round(max_conf * 100)}%. Detected by Naive Bayes."

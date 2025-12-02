@@ -265,51 +265,62 @@ def attacks(request):
 def stats(request):
     """
     GET /api/stats/
-    Return high-level stats for StatCards.
-
-    - total    = all HTTP events (rows in CSV)
-    - threats  = number of rows after filtering (same as /api/attacks/)
-    - breaches = subset of threats considered "high impact"
-    - health   = 100 - (threats / total * 100)
+    Reflects the exact numbers from threat_analyzer.py
     """
     csv_path = _get_latest_csv_path()
     if not csv_path:
         return JsonResponse({
-            "total": 0,
-            "threats": 0,
-            "breaches": 0,
-            "health": 100,
+            "total": 0, "threats": 0, "breaches": 0, "health": 100,
+            "breakdown": {} 
         })
 
     df = pd.read_csv(csv_path).fillna("")
 
+    # 1. TOTAL RECORDS
     total = len(df)
 
-    # same filtering as attacks()
-    df_attacks = _filtered_attack_rows(df)
-    threats = len(df_attacks)
+    # 2. THREATS
+    # logic: count any row where attack_type is NOT 'Benign'
+    # This matches: Total - Final Benign from your console output
+    df_threats = df[df["attack_type"] != "Benign"].copy()
+    threats = len(df_threats)
+
+    # 3. BREACHES (Critical Fix)
+    # Only count as a breach if the Status Code indicates success (200-299)
+    # Ensure Status_Code is numeric first
+    df_threats["Status_Code"] = pd.to_numeric(df_threats["Status_Code"], errors='coerce').fillna(0).astype(int)
 
     breach_types = {
-        "Command Injection",
-        "SSRF",
-        "Directory Traversal / LFI",
-        "Remote File Inclusion (RFI)",
-        "Shell Upload Attempt",
-        "Bruteforce Attack",
+        "Command Injection", "SSRF", "Directory Traversal / LFI",
+        "Remote File Inclusion (RFI)", "Shell Upload Attempt", "Bruteforce Attack",
     }
-    breaches = int(df_attacks["attack_type"].isin(breach_types).sum())
+    
+    # Filter: Critical Attack Type AND Successful HTTP Response (200 OK, 201 Created, etc.)
+    active_breaches = df_threats[
+        (df_threats["attack_type"].isin(breach_types)) &
+        (df_threats["Status_Code"] >= 200) & 
+        (df_threats["Status_Code"] < 300)
+    ]
+    breaches = len(active_breaches)
 
+    # 4. HEALTH CALCULATION
     if total == 0:
         health = 100
     else:
         risk = min(100, int((threats / total) * 100))
         health = max(0, 100 - risk)
 
+    # 5. (Optional) DETAILED BREAKDOWN
+    # This groups by the 'detection_method' column created in threat_analyzer.py
+    # format: {'Regex': 678, 'ML': 179, ...}
+    breakdown = df_threats['detection_method'].value_counts().to_dict()
+
     return JsonResponse({
         "total": int(total),
         "threats": int(threats),
         "breaches": int(breaches),
         "health": int(health),
+        "breakdown": breakdown  # Now your frontend has access to the specific counts!
     })
 
 

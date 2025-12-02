@@ -108,6 +108,13 @@ class PipelineStats:
         self.bert_hit = 0
 
 
+# NEW: helper for per-layer attack counting (no logic change)
+def add_attack(layer_dict, attack_name):
+    if attack_name not in layer_dict:
+        layer_dict[attack_name] = 0
+    layer_dict[attack_name] += 1
+
+
 # === HELPERS FOR RFI / HPP / PATH / BRUTEFORCE ===
 
 def detect_rfi(url: str) -> bool:
@@ -123,7 +130,15 @@ def detect_rfi(url: str) -> bool:
         return False
 
     params = urllib.parse.parse_qs(query, keep_blank_values=True)
-    for _, values in params.items():
+
+    # 🔧 Restrict to typical inclusion-related parameter names
+    rfi_param_keys = {"file", "page", "include", "inc", "template", "tmpl", "view", "path"}
+
+    for key, values in params.items():
+        key_l = key.lower()
+        if key_l not in rfi_param_keys:
+            continue
+
         for v in values:
             v_dec = urllib.parse.unquote_plus(v).strip()
             if not RFI_PROTOCOL_PATTERN.match(v_dec):
@@ -251,7 +266,18 @@ def ml_layer_single(row):
         return None, None
 
     ml_label, ml_conf, ml_evidence = predict_ml_attack(query_part)
+
+    # 🔧 Normalize label so it matches regex-layer wording
     if ml_label != "Benign":
+        # Map any ML variant to your canonical label
+        if ml_label.strip().lower() in [
+            "html parameter pollution",
+            "hpp (http parameter pollution)",
+            "hpp",
+            "http parameter pollution",
+        ]:
+            ml_label = "HPP (HTTP Parameter Pollution)"
+
         return ml_label, ml_evidence
 
     return None, None
@@ -321,6 +347,12 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     stats = PipelineStats()
     stats.total = len(df)
 
+    # per-layer attack dictionaries
+    layer1_attacks = {}
+    layer2_attacks = {}
+    layer3_attacks = {}
+    layer4_attacks = {}
+
     print(f"\n🚀 Pipeline started on {stats.total} requests.")
 
     # --- LAYER 1: REGEX ---
@@ -344,6 +376,10 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[detected_idx, 'evidence'] = results.loc[detected_idx, 1]
         df.loc[detected_idx, 'detection_method'] = "Regex"
 
+        # count attacks in regex layer
+        for idx in detected_idx:
+            add_attack(layer1_attacks, df.loc[idx, 'attack_type'])
+
     mask_remaining = df['attack_type'] == "Benign"
     layer1_passed = mask_remaining.sum()
     layer1_detected = layer1_input - layer1_passed
@@ -351,6 +387,11 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"    Detected      : {layer1_detected}")
     print(f"    Passed to ML  : {layer1_passed}")
+
+    # regex layer breakdown
+    print(f"\n[1] REGEX LAYER ATTACK BREAKDOWN")
+    for k, v in layer1_attacks.items():
+        print(f"   {k}: {v}")
 
     # --- LAYER 2: ML ---
     layer2_input = layer1_passed
@@ -373,6 +414,10 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[detected_idx, 'evidence'] = results.loc[detected_idx, 1]
         df.loc[detected_idx, 'detection_method'] = "ML"
 
+        # count attacks in ML layer
+        for idx in detected_idx:
+            add_attack(layer2_attacks, df.loc[idx, 'attack_type'])
+
     mask_remaining = df['attack_type'] == "Benign"
     layer2_passed = mask_remaining.sum()
     layer2_detected = layer2_input - layer2_passed
@@ -380,6 +425,11 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"    Detected      : {layer2_detected}")
     print(f"    Passed to SPOOF: {layer2_passed}")
+
+    # ML layer breakdown
+    print(f"\n[2] ML LAYER ATTACK BREAKDOWN")
+    for k, v in layer2_attacks.items():
+        print(f"   {k}: {v}")
 
     # --- LAYER 3: SPOOF ---
     layer3_input = layer2_passed
@@ -401,6 +451,10 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[detected_idx, 'evidence'] = results.loc[detected_idx, 1]
         df.loc[detected_idx, 'detection_method'] = "Spoofing"
 
+        # count attacks in spoof layer
+        for idx in detected_idx:
+            add_attack(layer3_attacks, df.loc[idx, 'attack_type'])
+
     mask_remaining = df['attack_type'] == "Benign"
     layer3_passed = mask_remaining.sum()
     layer3_detected = layer3_input - layer3_passed
@@ -408,6 +462,11 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"    Detected      : {layer3_detected}")
     print(f"    Passed to BERT: {layer3_passed}")
+
+    # spoof layer breakdown
+    print(f"\n[3] SPOOF LAYER ATTACK BREAKDOWN")
+    for k, v in layer3_attacks.items():
+        print(f"   {k}: {v}")
 
     # --- LAYER 4: BERT ---
     layer4_input = layer3_passed
@@ -430,6 +489,10 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[detected_idx, 'evidence'] = results.loc[detected_idx, 1]
         df.loc[detected_idx, 'detection_method'] = "AI"
 
+        # count attacks in BERT layer
+        for idx in detected_idx:
+            add_attack(layer4_attacks, df.loc[idx, 'attack_type'])
+
     mask_remaining = df['attack_type'] == "Benign"
     layer4_passed = mask_remaining.sum()
     layer4_detected = layer4_input - layer4_passed
@@ -437,6 +500,11 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"    Detected      : {layer4_detected}")
     print(f"    Benign after layers (before bruteforce): {layer4_passed}")
+
+    # BERT layer breakdown
+    print(f"\n[4] AI/BERT LAYER ATTACK BREAKDOWN")
+    for k, v in layer4_attacks.items():
+        print(f"   {k}: {v}")
 
     # --- BRUTEFORCE CHECK (post-processing) ---
     if 'URL' in df.columns and 'Source_IP' in df.columns:
@@ -464,6 +532,26 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
                 df.loc[targets, 'attack_type'] = "Bruteforce Attack"
                 df.loc[targets, 'evidence'] = "High frequency failed login attempts from same IP+path"
                 df.loc[targets, 'detection_method'] = "Bruteforce Pattern"
+
+    # === ATTACK TYPE COUNTS BY LAYER ===
+    print("\n" + "=" * 80)
+    print("🔥 ATTACK TYPE COUNTS BY LAYER")
+    print("=" * 80)
+
+    def print_layer(title, data):
+        print(f"\n{title}")
+        if not data:
+            print("   (None)")
+        else:
+            for k, v in data.items():
+                print(f"   {k}: {v}")
+
+    print_layer("REGEX LAYER:", layer1_attacks)
+    print_layer("ML LAYER:", layer2_attacks)
+    print_layer("SPOOF LAYER:", layer3_attacks)
+    print_layer("AI/BERT LAYER:", layer4_attacks)
+
+    print("\n" + "=" * 80)
 
     # --- FINAL SUMMARY (including Bruteforce) ---
     total = len(df)
