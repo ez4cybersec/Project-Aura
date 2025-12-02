@@ -22,24 +22,34 @@ export default function Scan() {
 
         setIsScanning(true);
         setUploadError(null);
+        setScanStep(0);
+
+        // Start simulation immediately (Parallel Execution)
+        const simulationPromise = new Promise(resolve => {
+            setTimeout(() => setScanStep(1), 800);  // Parsing
+            setTimeout(() => setScanStep(2), 1600); // Analyzing
+            setTimeout(resolve, 2400);              // Minimum duration
+        });
 
         try {
-            // Step 1: Upload
-            setScanStep(0);
-            const response = await apiClient.uploadPCAP(files[0]);
+            // Run upload and simulation in parallel
+            const [response] = await Promise.all([
+                apiClient.uploadPCAP(files[0]),
+                simulationPromise
+            ]);
 
             if (response.status !== 'ok') {
                 throw new Error(response.message || 'Upload failed');
             }
 
-            // Step 2: Simulation sequence for effect
-            setTimeout(() => setScanStep(1), 1000); // Parsing
-            setTimeout(() => setScanStep(2), 2000); // Analyzing
-            setTimeout(() => navigate('/dashboard'), 3000); // Redirect
+            // Navigate immediately after both are done
+            navigate('/dashboard', { state: { justScanned: true } });
+
         } catch (error) {
             console.error("Upload failed:", error);
             setUploadError("Upload failed. Please try again.");
             setIsScanning(false);
+            setScanStep(0);
         }
     };
 
