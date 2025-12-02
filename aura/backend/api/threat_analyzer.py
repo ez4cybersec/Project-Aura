@@ -18,7 +18,7 @@ CMD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"powershell",
     r"\$\(.*\)",
     r"`.*`",
-    r"{{.*system.*}}"
+    r"{{.*system.*}}",
 ]]
 
 SQLI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -29,7 +29,7 @@ SQLI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"(or|and)\s+\d+=\d+",
     r"(or|and)\s+['\"][^'\"]+['\"]=['\"][^'\"]+['\"]",
     r"['\"]\s*(or|and)\s*['\"]",
-    r"--|/\*|#"
+    r"--|/\*|#",
 ]]
 
 XSS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -41,7 +41,7 @@ XSS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"<img\s+src",
     r"<iframe",
     r"<svg",
-    r"<body"
+    r"<body",
 ]]
 
 LFI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -51,7 +51,7 @@ LFI_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"/etc/(passwd|shadow|issue|group|hosts|motd)",
     r"[c-z]:\\(windows|winnt|boot\.ini)",
     r"php://(filter|input|expect)",
-    r"file://"
+    r"file://",
 ]]
 
 SSRF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -64,14 +64,14 @@ SSRF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"=\s*http://172\.(1[6-9]|2[0-9]|3[0-1])\.",
     r"dict://",
     r"gopher://",
-    r"ldap://"
+    r"ldap://",
 ]]
 
 XXE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"<!entity",
     r"<!doctype",
     r"system\s+[\"']",
-    r"public\s+[\"']"
+    r"public\s+[\"']",
 ]]
 
 URL_SPOOF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -83,17 +83,18 @@ URL_SPOOF_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"(faceb00k|facbook)\.com",
     r"(micros0ft|rnicrosoft)\.com",
     r"(instaqram|lnstagram)\.com",
-    r"(linkedln|1inkedin)\.com"
+    r"(linkedln|1inkedin)\.com",
 ]]
 
 SHELL_UPLOAD_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"filename\s*=\s*\"?[^\"]*\.(php[0-9]?|phtml|pht|phar|asp|aspx|jsp|cfm|cgi|pl|sh|bash)\"?",
     r"(web)?shell\.php",
     r"(c99|r57|b374k)\.php",
-    r"content-type\s*:\s*application/(x-php|x-httpd-php|x-shellscript)"
+    r"content-type\s*:\s*application/(x-php|x-httpd-php|x-shellscript)",
 ]]
 
-RFI_PATTERN = re.compile(r"=\s*(http|https|ftp|ftps)://", re.IGNORECASE)
+# For improved RFI detection (URL passed as param value)
+RFI_PROTOCOL_PATTERN = re.compile(r"^(?:https?|ftps?)://", re.IGNORECASE)
 
 
 class PipelineStats:
@@ -105,6 +106,75 @@ class PipelineStats:
         self.spoof = 0
         self.bert_in = 0
         self.bert_hit = 0
+
+
+# === HELPERS FOR RFI / HPP / PATH / BRUTEFORCE ===
+
+def detect_rfi(url: str) -> bool:
+    """Detect external URLs passed as parameter values (RFI style)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+
+    base_host = (parsed.hostname or "").lower()
+    query = parsed.query or ""
+    if not query:
+        return False
+
+    params = urllib.parse.parse_qs(query, keep_blank_values=True)
+    for _, values in params.items():
+        for v in values:
+            v_dec = urllib.parse.unquote_plus(v).strip()
+            if not RFI_PROTOCOL_PATTERN.match(v_dec):
+                continue
+
+            try:
+                v_host = urllib.parse.urlparse(v_dec).hostname or ""
+            except Exception:
+                v_host = ""
+            v_host = v_host.lower()
+            if not v_host:
+                continue
+
+            # ignore same-site and obvious internal URLs
+            if v_host == base_host:
+                continue
+            if v_host in ("localhost", "127.0.0.1"):
+                continue
+            if v_host.startswith(("10.", "192.168.", "172.")):
+                continue
+
+            return True
+
+    return False
+
+
+def detect_hpp(query: str):
+    """
+    HTTP Parameter Pollution:
+    - Duplicate parameter keys with DIFFERENT values
+    - Ignore array-style keys like 'ids[]'
+    """
+    if not query or "=" not in query:
+        return None
+
+    params = urllib.parse.parse_qs(query, keep_blank_values=True)
+    for k, v in params.items():
+        # typical array style, don't flag
+        if k.endswith("[]"):
+            continue
+        if len(v) > 1 and len(set(v)) > 1:
+            return k
+
+    return None
+
+
+def get_path(url: str) -> str:
+    try:
+        return urllib.parse.urlparse(url).path or ""
+    except Exception:
+        return ""
 
 
 # === LAYER FUNCTIONS ===
@@ -140,9 +210,27 @@ def regex_layer_single(row):
         if res:
             return res[0], res[1]
 
-    if RFI_PATTERN.search(decoded_url):
-        return "Remote File Inclusion (RFI)", "Regex found remote protocol"
+    # --- HPP (HTTP Parameter Pollution) in URL query or POST body ---
+    try:
+        parsed = urllib.parse.urlparse(url)
+        query = parsed.query or ""
+    except Exception:
+        query = ""
 
+    offending_key = detect_hpp(query)
+
+    # HPP can also appear in form-encoded POST body
+    if not offending_key and body and "=" in body and "&" in body:
+        offending_key = detect_hpp(body)
+
+    if offending_key:
+        return "HPP (HTTP Parameter Pollution)", f"Duplicate parameter key with different values: '{offending_key}'"
+
+    # --- RFI ---
+    if detect_rfi(url):
+        return "Remote File Inclusion (RFI)", "External URL passed as parameter"
+
+    # --- XXE only if XML-like content present ---
     if "xml" in full_payload:
         res = check(XXE_PATTERNS, "XXE")
         if res:
@@ -170,25 +258,21 @@ def ml_layer_single(row):
 
 
 def spoof_layer_single(row):
+    """
+    Layer 3: ONLY URL spoofing / typosquatting.
+    HPP is handled in the REGEX layer.
+    """
     url = str(row.get('URL', '') or "").strip()
 
+    # --- URL spoofing via regex patterns ---
     for p in URL_SPOOF_PATTERNS:
         if p.search(url):
             return "URL Spoofing / Typosquatting", f"Suspicious regex pattern: '{p.pattern}'"
 
+    # --- URL spoofing via ML model ---
     is_spoof, spoof_ev = predict_url_spoofing(url)
     if is_spoof:
         return "URL Spoofing / Typosquatting", spoof_ev
-
-    try:
-        q = urllib.parse.urlparse(url).query
-        if q:
-            params = urllib.parse.parse_qs(q, keep_blank_values=True)
-            for k, v in params.items():
-                if len(v) > 1:
-                    return "HPP (HTTP Parameter Pollution)", f"Duplicate parameter key: '{k}'"
-    except Exception:
-        pass
 
     return None, None
 
@@ -219,6 +303,8 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     - evidence
     - detection_method
     (plus original columns)
+
+    Flow: REGEX (includes HPP/RFI/SSRF/XXE etc) -> ML -> SPOOF -> BERT -> BRUTEFORCE
     """
     if df.empty:
         df = df.copy()
@@ -295,9 +381,9 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     print(f"    Detected      : {layer2_detected}")
     print(f"    Passed to SPOOF: {layer2_passed}")
 
-    # --- LAYER 3: SPOOF/HPP ---
+    # --- LAYER 3: SPOOF ---
     layer3_input = layer2_passed
-    print(f"\n[3] SPOOFING / HPP LAYER")
+    print(f"\n[3] SPOOFING LAYER")
     print(f"    Input records : {layer3_input}")
 
     if layer3_input > 0:
@@ -313,7 +399,7 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
 
         df.loc[detected_idx, 'attack_type'] = results.loc[detected_idx, 0]
         df.loc[detected_idx, 'evidence'] = results.loc[detected_idx, 1]
-        df.loc[detected_idx, 'detection_method'] = "Pattern"
+        df.loc[detected_idx, 'detection_method'] = "Spoofing"
 
     mask_remaining = df['attack_type'] == "Benign"
     layer3_passed = mask_remaining.sum()
@@ -353,17 +439,31 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     print(f"    Benign after layers (before bruteforce): {layer4_passed}")
 
     # --- BRUTEFORCE CHECK (post-processing) ---
-    login_mask = df['URL'].astype(str).str.contains("login", case=False, na=False)
-    if login_mask.any():
-        subset = df[login_mask].copy()
-        brute_counts = subset.groupby('Source_IP')['URL'].transform('count')
-        candidate_mask = (brute_counts >= 5) & (subset['attack_type'] == 'Benign')
-        targets = subset.index[candidate_mask]
+    if 'URL' in df.columns and 'Source_IP' in df.columns:
+        url_series = df['URL'].astype(str)
+        login_mask = url_series.str.contains(r"(login|signin|auth)", case=False, na=False)
 
-        if len(targets) > 0:
-            df.loc[targets, 'attack_type'] = "Bruteforce Attack"
-            df.loc[targets, 'evidence'] = "High frequency login attempts"
-            df.loc[targets, 'detection_method'] = "Pattern"
+        # by default consider all as potential fails; override if status column exists
+        fail_mask = pd.Series(True, index=df.index)
+        for col in ['Status_Code', 'HTTP_Status', 'Response_Code']:
+            if col in df.columns:
+                codes = df[col].astype(str)
+                fail_mask = codes.str.match(r"[45]\d\d", na=False)
+                break
+
+        brute_subset = df[login_mask & fail_mask & (df['attack_type'] == 'Benign')].copy()
+        if not brute_subset.empty:
+            paths = url_series.apply(get_path)
+            brute_subset['_path'] = paths.loc[brute_subset.index]
+
+            counts = brute_subset.groupby(['Source_IP', '_path'])['_path'].transform('count')
+            threshold = 5
+            targets = brute_subset.index[counts >= threshold]
+
+            if len(targets) > 0:
+                df.loc[targets, 'attack_type'] = "Bruteforce Attack"
+                df.loc[targets, 'evidence'] = "High frequency failed login attempts from same IP+path"
+                df.loc[targets, 'detection_method'] = "Bruteforce Pattern"
 
     # --- FINAL SUMMARY (including Bruteforce) ---
     total = len(df)
@@ -380,7 +480,7 @@ def run_full_analysis(df: pd.DataFrame) -> pd.DataFrame:
     print(f"Total records            : {total}")
     print(f"Regex detections         : {regex_det}")
     print(f"ML detections            : {ml_det}")
-    print(f"Spoof/HPP detections     : {spoof_det}")
+    print(f"Spoof detections         : {spoof_det}")
     print(f"BERT detections          : {bert_det}")
     print(f"Bruteforce detections    : {bruteforce_det}")
     print(f"Final Benign             : {total - total_threats}")
