@@ -391,32 +391,22 @@ def traffic(request):
 #  /api/explain/  – per-attack BERT XAI explanation
 # ============================================================
 
-from .xai_bert import get_explanation  # single, clear import
-
+# In your views.py
+from .xai_bert import get_explanation, get_mitigation_advice  # Import the new function
 
 @api_view(['POST'])
 def explain_attack(request):
-    """
-    POST /api/explain/
-    Receives JSON: {"url": "http://suspicious.com/..."}
-    Returns JSON: { "explanation": [ {"token": "...", "weight": 0.9}, ... ] }
-    """
-    try:
-        # 1. Get the URL from the React request body
-        data = request.data
-        target_url = data.get('url', '')
+    # ... setup code ...
+    attack_type = request.data.get('type', 'Unknown')
+    target_url = request.data.get('url', '')
 
-        if not target_url:
-            return Response({"error": "No URL provided"}, status=400)
+    # 1. Get Visual Explanation
+    explanation_data = get_explanation(target_url)
 
-        # 2. Run your BERT XAI model
-        explanation_data = get_explanation(target_url)
+    # 2. Get Generated Text (Pass attack_type)
+    mitigation_text = get_mitigation_advice(attack_type)
 
-        # 3. Return the data in the format React expects
-        return Response({
-            "explanation": explanation_data
-        })
-
-    except Exception as e:
-        print(f"XAI Error: {e}")
-        return Response({"error": str(e)}, status=500)
+    return Response({
+        "explanation": explanation_data,
+        "mitigation": mitigation_text
+    })
