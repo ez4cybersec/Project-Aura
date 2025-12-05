@@ -404,16 +404,18 @@ def analyze_attack(request):
     try:
         data = json.loads(request.body)
         
-        attack_data = data.get('attack_data')
-        attack_type = data.get('attack_type')
+        # Extract data from frontend request
+        attack_data = data.get('attack_data') # The payload (e.g., <script>...)
+        attack_type = data.get('attack_type') # The label (e.g., "XSS")
 
         if not attack_data or not attack_type:
-            return JsonResponse({"error": "Missing data"}, status=400)
+            return JsonResponse({"error": "Missing attack_data or attack_type"}, status=400)
 
-        # 1. Get Visual Explanation (The Red/Green boxes)
-        explanation = get_explanation(attack_data)
+        # 1. Get Visual Explanation (Captum / SecBERT)
+        # Note: We pass attack_type now so SecBERT knows which class output to analyze
+        explanation = get_explanation(attack_data, attack_type)
 
-        # 2. Get General Advice (The Text)
+        # 2. Get General Advice (Gemma)
         mitigation = get_mitigation_advice(attack_data, attack_type, explanation)
 
         return JsonResponse({
@@ -422,5 +424,5 @@ def analyze_attack(request):
         })
 
     except Exception as e:
-        print(f"Server Error: {e}")
+        print(f"Server Error in analyze_attack: {e}")
         return JsonResponse({"error": str(e)}, status=500)

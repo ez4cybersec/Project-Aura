@@ -5,3 +5,5 @@ aura/backend/api/__pycache__/
 /env
 /venv
 /aura/backend/models/
+secrets.py
+**/secrets.py

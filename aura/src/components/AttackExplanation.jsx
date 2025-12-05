@@ -13,9 +13,10 @@ export default function AttackExplanation({ selectedAttack }) {
       setExplanation(null);
       setMitigation("");
 
+      // Ensure payload matches what Django expects
       const payload = { 
-        attack_data: selectedAttack.url || selectedAttack.payload, 
-        attack_type: selectedAttack.type 
+        attack_data: selectedAttack.url || selectedAttack.payload || "No payload data", 
+        attack_type: selectedAttack.type || "Unknown"
       };
 
       fetch('http://127.0.0.1:8000/api/explain/', { 
@@ -34,7 +35,7 @@ export default function AttackExplanation({ selectedAttack }) {
       })
       .catch(err => {
           console.error("Error fetching explanation:", err);
-          setMitigation("Unable to connect to AI server.");
+          setMitigation("Unable to connect to AI server. Please ensure the backend is running and HuggingFace tokens are valid.");
           setLoading(false);
       });
     }
@@ -60,7 +61,7 @@ export default function AttackExplanation({ selectedAttack }) {
   }
 
   return (
-    <div className="p-6 border border-white/10 rounded-xl bg-black/40 backdrop-blur-md shadow-xl">
+    <div className="p-6 border border-white/10 rounded-xl bg-black/40 backdrop-blur-md shadow-xl transition-all duration-300">
       <div className="flex justify-between items-start mb-6 border-b border-white/10 pb-4">
         <div>
           <h3 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -81,30 +82,33 @@ export default function AttackExplanation({ selectedAttack }) {
       </div>
 
       {loading ? (
-        <div className="p-8 text-center animate-pulse text-blue-400 bg-black/20 rounded-lg flex flex-col items-center justify-center">
+        <div className="p-8 text-center animate-pulse text-blue-400 bg-black/20 rounded-lg flex flex-col items-center justify-center min-h-[150px]">
           <Bot className="mb-2 animate-bounce" size={32} />
-          <p>🧠 AI is analyzing payload & generating mitigation...</p>
+          <p className="font-mono text-sm">Initializing SecBERT & Gemma...</p>
+          <p className="text-xs text-blue-500/50 mt-1">Calculating Integrated Gradients</p>
         </div>
       ) : (
         <AttackVisualizer explanationData={explanation} />
       )}
 
-      <div className="mt-6 bg-blue-900/20 border-l-4 border-blue-500 p-4 rounded-r-lg transition-all duration-500">
-        <div className="flex items-start gap-3">
-          <ShieldAlert className="text-blue-400 shrink-0 mt-1" size={24} />
-          <div className="w-full">
-            <h4 className="font-bold text-blue-100 text-sm uppercase mb-2 flex items-center gap-2">
-                AI Recommended Mitigation
+      {!loading && mitigation && (
+        <div className="mt-6 bg-blue-900/10 border-l-4 border-blue-500 p-4 rounded-r-lg hover:bg-blue-900/20 transition-colors">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="text-blue-400 shrink-0 mt-1" size={24} />
+            <div className="w-full">
+              <h4 className="font-bold text-blue-100 text-sm uppercase mb-2 flex items-center gap-2">
+                AI Mitigation Strategy
                 <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30">
-                    GENERATIVE AI
+                  GEMMA-3 ENHANCED
                 </span>
-            </h4>
-            <pre className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap font-sans bg-transparent border-none p-0 m-0">
-              {mitigation}
-            </pre>
+              </h4>
+              <pre className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap font-sans bg-transparent border-none p-0 m-0">
+                {mitigation}
+              </pre>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
