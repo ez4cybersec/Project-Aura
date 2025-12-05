@@ -391,22 +391,36 @@ def traffic(request):
 #  /api/explain/  – per-attack BERT XAI explanation
 # ============================================================
 
-# In your views.py
-from .xai_bert import get_explanation, get_mitigation_advice  # Import the new function
+import json
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+from .xai_bert import get_explanation, get_mitigation_advice
 
-@api_view(['POST'])
-def explain_attack(request):
-    # ... setup code ...
-    attack_type = request.data.get('type', 'Unknown')
-    target_url = request.data.get('url', '')
+@csrf_exempt
+def analyze_attack(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
 
-    # 1. Get Visual Explanation
-    explanation_data = get_explanation(target_url)
+    try:
+        data = json.loads(request.body)
+        
+        attack_data = data.get('attack_data')
+        attack_type = data.get('attack_type')
 
-    # 2. Get Generated Text (Pass attack_type)
-    mitigation_text = get_mitigation_advice(attack_type)
+        if not attack_data or not attack_type:
+            return JsonResponse({"error": "Missing data"}, status=400)
 
-    return Response({
-        "explanation": explanation_data,
-        "mitigation": mitigation_text
-    })
+        # 1. Get Visual Explanation (The Red/Green boxes)
+        explanation = get_explanation(attack_data)
+
+        # 2. Get General Advice (The Text)
+        mitigation = get_mitigation_advice(attack_data, attack_type, explanation)
+
+        return JsonResponse({
+            "explanation": explanation,
+            "mitigation": mitigation,
+        })
+
+    except Exception as e:
+        print(f"Server Error: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
