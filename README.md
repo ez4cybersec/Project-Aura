@@ -92,6 +92,3 @@ The backend test module is currently a scaffold with no implemented test cases. 
 | Results appear unchanged | Wait for the five-second refresh and inspect backend logs for background-task errors |
 | A `.cap` upload is rejected | Use a supported `.pcap`, `.pcapng`, or `.csv` file; the backend rejects `.cap` despite the frontend picker accepting it |
 
-## Contributing
-
-Keep changes focused, document new dependencies and model requirements, and include reproducible validation for changes to detection behavior. Use sanitized or synthetic traffic samples when sharing issues or test data.
